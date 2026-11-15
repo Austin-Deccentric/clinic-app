@@ -5,7 +5,7 @@ A small clinic booking API (list slots, book, look up, cancel, page through book
 - Live API and page: https://clinic-app-mh31.onrender.com
 - Contract: https://koyaacademy.com/assessment-api/openapi.json (the API follows it exactly, so it serves as the API reference)
 
-Every route except `GET /`, the page's assets and `/health` needs an `X-API-Key` header. The page itself never holds the key: `GET /` gives each browser an HttpOnly session cookie, and the page only sees the bookings made with that cookie.
+Every route except `GET /`, the page's assets, `/health`, `/docs` and `/openapi.json` needs an `X-API-Key` header. The page itself never holds the key: `GET /` gives each browser an HttpOnly session cookie, and the page only sees the bookings made with that cookie.
 
 ## Run locally
 
@@ -69,7 +69,7 @@ curl -sS -X POST "$BASE_URL/reset" -H "X-API-Key: $API_KEY" -H 'Content-Type: ap
 
 ## Known limits
 
-- **Cold starts.** The service runs on Render's free instance, which sleeps after 15 idle minutes. The first request after that takes about 30 seconds.
+- **Cold starts.** The service runs on Render's free instance, which sleeps after 15 idle minutes. The first request after that can take up to about a minute.
 - **A restart empties the rate-limit windows**, because they live in memory.
 - **The service can't scale out** past one worker on one instance without moving the limiter (see below).
 
