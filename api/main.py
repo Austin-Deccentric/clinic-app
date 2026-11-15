@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import StringConstraints
 from sqlalchemy import exists, insert, select, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DataError, IntegrityError
 from sqlmodel import SQLModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -41,9 +41,9 @@ class ResetIn(SQLModel):
 
 
 class NewBooking(SQLModel):
-    slot_id: Annotated[str, StringConstraints(min_length=1, pattern=r"\S")]  # blank is 400, but not trimmed
-    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-    email: Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=1,
+    slot_id: Annotated[str, StringConstraints(min_length=1, max_length=200, pattern=r"\S")]  # blank is 400, not trimmed
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+    email: Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=1, max_length=254,
                                             pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")]
 
 
@@ -86,6 +86,11 @@ async def http_error(request, exc):
     return JSONResponse({"error": str(exc.detail).lower()}, status_code=exc.status_code, headers=exc.headers)
 
 
+@app.exception_handler(DataError)
+async def bad_data(request, exc):  # e.g. a NUL byte, which Postgres text can't hold: the client's input, so 400
+    return error(400, "invalid characters in input")
+
+
 @app.exception_handler(Exception)
 async def internal_error(request, exc):
     return error(500, "internal error")
@@ -95,7 +100,7 @@ async def internal_error(request, exc):
 async def require_api_key(request, call_next):
     # Runs before routing and body parsing, so a bad key is 401 even on unknown routes or bad JSON.
     path = request.url.path
-    if request.method in ("GET", "HEAD") and (path in ("/", "/health") or path.startswith("/assets/")):
+    if request.method == "GET" and (path in ("/", "/health") or path.startswith("/assets/")):
         return await call_next(request)
     if not hmac.compare_digest(request.headers.get("x-api-key", "").encode(), API_KEY.encode()):
         return error(401, "missing or invalid API key")

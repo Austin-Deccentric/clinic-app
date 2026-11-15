@@ -38,6 +38,10 @@ def test_auth_required(method, path, headers):
     assert_error(nokey.request(method, path, headers=headers, json={}), 401)
 
 
+def test_health_needs_no_key():
+    assert nokey.get("/health").status_code == 200
+
+
 def test_auth_runs_before_body_parsing():
     r = nokey.post("/bookings", headers={"X-API-Key": "wrong", "Content-Type": "application/json"}, content="{not json")
     assert_error(r, 401)
@@ -84,6 +88,24 @@ def test_non_string_field_is_400(field):
 @pytest.mark.parametrize("email", ["ada", "ada@", "@x.com", "ada@x", "a b@x.com"])
 def test_bad_email_is_400(email):
     assert_error(api.post("/bookings", json={**GOOD, "email": email}), 400)
+
+
+@pytest.mark.parametrize("field", ["slot_id", "name", "email"])
+def test_nul_byte_is_400(field):
+    body = {**GOOD, field: "x\x00@example.com" if field == "email" else "s1\x00"}
+    assert_error(api.post("/bookings", json=body), 400)
+
+
+def test_nul_byte_in_query_is_400():
+    assert_error(api.get("/slots", params={"provider": "\x00"}), 400)
+
+
+def test_overlong_name_is_400():
+    assert_error(api.post("/bookings", json={**GOOD, "name": "a" * 201}), 400)
+
+
+def test_invalid_body_beats_unknown_slot():
+    assert_error(api.post("/bookings", json={"slot_id": "nope", "name": "", "email": "ada@example.com"}), 400)
 
 
 @pytest.mark.parametrize("content", ["{not json", "[]"], ids=["malformed", "array"])
