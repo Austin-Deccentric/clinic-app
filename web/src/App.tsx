@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 type Slot = { id: string; provider: string; start: string; end: string; available: boolean }
 type Booking = { id: string; slot_id: string; name: string; email: string; status: string; created_at: string }
@@ -6,9 +6,10 @@ type Booking = { id: string; slot_id: string; name: string; email: string; statu
 const headers = { 'Content-Type': 'application/json', 'X-API-Key': import.meta.env.VITE_API_KEY ?? '' }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, { ...init, headers })
+  const res = await fetch(path, { ...init, headers: { ...headers, ...init?.headers } })
   const body = await res.json().catch(() => null)
-  if (!res.ok || body == null) throw new Error(body?.error ?? `Something went wrong (${res.status}). Please try again.`)
+  if (!res.ok || body == null)
+    throw Object.assign(new Error(body?.error ?? `Something went wrong (${res.status}). Please try again.`), { status: res.status })
   return body
 }
 
@@ -19,6 +20,9 @@ const when = (s: Slot) =>
   `${fmt(s.start, { weekday: 'short', day: 'numeric', month: 'short' })}, ` +
   `${fmt(s.start, { hour: '2-digit', minute: '2-digit' })}–${fmt(s.end, { hour: '2-digit', minute: '2-digit' })} UTC`
 
+// Stable identity, so React calls it once on mount rather than on every re-render.
+const focusOnMount = (el: HTMLElement | null) => el?.focus()
+
 export default function App() {
   const [slots, setSlots] = useState<Slot[] | null>(null)
   const [loadError, setLoadError] = useState('')
@@ -26,6 +30,10 @@ export default function App() {
   const [confirmed, setConfirmed] = useState<{ booking: Booking; slot: Slot } | null>(null)
   const [formError, setFormError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const attempt = useRef<{ body: string; key: string } | null>(null)
+  // Lives here, not in the form, so switching slots (e.g. after a 409) keeps what the user typed.
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
 
   const loadSlots = () =>
     api<{ slots: Slot[] }>('/slots')
@@ -37,17 +45,24 @@ export default function App() {
   async function book(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     if (!selected) return
-    const form = new FormData(e.currentTarget)
+    const body = JSON.stringify({ slot_id: selected.id, name, email })
+    // Retrying the same body reuses its key, so a lost response can't book twice; an edited body gets a new key.
+    if (attempt.current?.body !== body) attempt.current = { body, key: crypto.randomUUID() }
     setSubmitting(true)
     setFormError('')
     try {
       const booking = await api<Booking>('/bookings', {
         method: 'POST',
-        body: JSON.stringify({ slot_id: selected.id, name: form.get('name'), email: form.get('email') }),
+        body,
+        headers: { 'Idempotency-Key': attempt.current.key },
       })
+      attempt.current = null
       setConfirmed({ booking, slot: selected })
       setSelected(null)
     } catch (err) {
+      // Keep the key only when the outcome is unknown (network error, 5xx, 429); a definitive 4xx would just replay.
+      const status = (err as { status?: number }).status
+      if (status && status >= 400 && status < 500 && status !== 429) attempt.current = null
       setFormError((err as Error).message)
     } finally {
       setSubmitting(false)
@@ -61,7 +76,7 @@ export default function App() {
 
       {confirmed ? (
         <section className="mt-6 rounded-lg border border-emerald-300 bg-emerald-50 p-4" aria-live="polite">
-          <h2 className="text-lg font-semibold text-emerald-900">Booking confirmed</h2>
+          <h2 ref={focusOnMount} tabIndex={-1} className="text-lg font-semibold text-emerald-900 focus:outline-none">Booking confirmed</h2>
           <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
             <dt className="text-slate-600">Booking ID</dt>
             <dd className="font-mono">{confirmed.booking.id}</dd>
@@ -71,7 +86,7 @@ export default function App() {
             <dd>{when(confirmed.slot)}</dd>
           </dl>
           <button
-            className="mt-4 rounded-md bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
+            className="mt-4 min-h-11 rounded-md bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
             onClick={() => setConfirmed(null)}
           >
             Book another slot
@@ -96,7 +111,7 @@ export default function App() {
                   disabled={!s.available}
                   aria-pressed={selected?.id === s.id}
                   onClick={() => { setSelected(s); setFormError('') }}
-                  className="flex min-h-11 w-full items-center justify-between rounded-md border border-slate-300 px-4 py-2 text-left hover:border-slate-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 aria-pressed:border-slate-900 aria-pressed:bg-slate-900 aria-pressed:text-white"
+                  className="flex min-h-11 w-full items-center justify-between rounded-md border border-slate-300 px-4 py-2 text-left hover:border-slate-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-600 aria-pressed:border-slate-900 aria-pressed:bg-slate-900 aria-pressed:text-white"
                 >
                   <span>
                     <span className="block font-medium">{s.provider}</span>
@@ -109,11 +124,11 @@ export default function App() {
                   <form onSubmit={book} className="mt-2 space-y-3 rounded-md border border-slate-200 bg-slate-50 p-4">
                     <label className="block text-sm font-medium">
                       Name
-                      <input name="name" required autoComplete="name" className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-normal" />
+                      <input name="name" required autoComplete="name" autoFocus value={name} onChange={(e) => setName(e.target.value)} className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-normal" />
                     </label>
                     <label className="block text-sm font-medium">
                       Email
-                      <input name="email" type="email" required autoComplete="email" className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-normal" />
+                      <input name="email" type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-normal" />
                     </label>
                     {formError && <p role="alert" className="text-sm text-red-700">{formError}</p>}
                     <button
