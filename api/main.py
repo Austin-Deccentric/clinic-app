@@ -1,11 +1,18 @@
+import hmac
+import os
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Annotated
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import StringConstraints
 from sqlalchemy import exists, insert, select, text
+from sqlalchemy.exc import DataError, IntegrityError
 from sqlmodel import SQLModel
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from api.db import Session, engine
 from api.models import Booking, Slot
@@ -17,6 +24,9 @@ DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
 app.mount("/assets", StaticFiles(directory=DIST / "assets", check_dir=False), name="assets")
 
 INT4_MAX = 2**31 - 1  # bookings.id is a Postgres integer
+
+API_KEY = os.environ["API_KEY"]
+assert API_KEY, "API_KEY must not be empty"  # fail closed: never boot without auth
 
 
 class SlotIn(SQLModel):
@@ -31,9 +41,10 @@ class ResetIn(SQLModel):
 
 
 class NewBooking(SQLModel):
-    slot_id: str
-    name: str
-    email: str
+    slot_id: Annotated[str, StringConstraints(min_length=1, max_length=200, pattern=r"\S")]  # blank is 400, not trimmed
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+    email: Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=1, max_length=254,
+                                            pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")]
 
 
 def iso(dt: datetime) -> str:
@@ -53,6 +64,47 @@ def booking_out(b: Booking) -> dict:
 
 def error(status: int, message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_failed(request, exc):  # 400, never FastAPI's 422: the contract keeps 422 for idempotency
+    e = exc.errors()[0]
+    loc = tuple(e["loc"])
+    if e["type"] == "json_invalid":
+        msg = "invalid JSON body"
+    elif loc == ("body",):
+        msg = "request body must be a JSON object"
+    elif e["type"] in ("missing", "string_too_short"):
+        msg = f"{loc[-1]} is required"
+    else:
+        msg = f"{loc[-1]} is invalid"
+    return error(400, msg)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_error(request, exc):
+    return JSONResponse({"error": str(exc.detail).lower()}, status_code=exc.status_code, headers=exc.headers)
+
+
+@app.exception_handler(DataError)
+async def bad_data(request, exc):  # e.g. a NUL byte, which Postgres text can't hold: the client's input, so 400
+    return error(400, "invalid characters in input")
+
+
+@app.exception_handler(Exception)
+async def internal_error(request, exc):
+    return error(500, "internal error")
+
+
+@app.middleware("http")
+async def require_api_key(request, call_next):
+    # Runs before routing and body parsing, so a bad key is 401 even on unknown routes or bad JSON.
+    path = request.url.path
+    if request.method == "GET" and (path in ("/", "/health") or path.startswith("/assets/")):
+        return await call_next(request)
+    if not hmac.compare_digest(request.headers.get("x-api-key", "").encode(), API_KEY.encode()):
+        return error(401, "missing or invalid API key")
+    return await call_next(request)
 
 
 @app.get("/", include_in_schema=False)
@@ -95,10 +147,23 @@ async def list_slots(provider: str | None = None):
 
 @app.post("/bookings", status_code=201)
 async def create_booking(body: NewBooking):
-    async with Session.begin() as s:
-        booking = await s.scalar(
-            insert(Booking).values(slot_id=body.slot_id, name=body.name, email=body.email).returning(Booking)
-        )
+    try:
+        async with Session.begin() as s:
+            slot = await s.get(Slot, body.slot_id)
+            if slot is None:
+                return error(404, "slot not found")
+            if slot.start <= datetime.now(UTC):
+                return error(400, "slot has already started")
+            # No check for an existing booking: the partial unique index decides, atomically.
+            booking = await s.scalar(
+                insert(Booking).values(slot_id=body.slot_id, name=body.name, email=body.email).returning(Booking)
+            )
+    except IntegrityError as e:
+        if e.orig.sqlstate == "23505":
+            return error(409, "slot already booked")
+        if e.orig.sqlstate == "23503":  # a concurrent /reset deleted the slot after we loaded it
+            return error(404, "slot not found")
+        raise
     return booking_out(booking)
 
 
