@@ -4,10 +4,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import exists, insert, select, text
 from sqlmodel import SQLModel
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from api.db import Session, engine
 from api.models import Booking, Slot
@@ -58,6 +60,31 @@ def booking_out(b: Booking) -> dict:
 
 def error(status: int, message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_failed(request, exc):  # 400, never FastAPI's 422: the contract keeps 422 for idempotency
+    e = exc.errors()[0]
+    loc = tuple(e["loc"])
+    if e["type"] == "json_invalid":
+        msg = "invalid JSON body"
+    elif loc == ("body",):
+        msg = "request body must be a JSON object"
+    elif e["type"] in ("missing", "string_too_short"):
+        msg = f"{loc[-1]} is required"
+    else:
+        msg = f"{loc[-1]} is invalid"
+    return error(400, msg)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_error(request, exc):
+    return JSONResponse({"error": str(exc.detail).lower()}, status_code=exc.status_code, headers=exc.headers)
+
+
+@app.exception_handler(Exception)
+async def internal_error(request, exc):
+    return error(500, "internal error")
 
 
 @app.middleware("http")
