@@ -48,8 +48,8 @@ Checks live in `tests/test_level<N>.py` and run with `BASE_URL=... uv run pytest
 - [x] 5.4 Have the page send a fresh `Idempotency-Key` (`crypto.randomUUID()`) for each submit, reused on retry. Deploy.
 
 ## Phase 6: Level 4b (pagination)
-- [ ] 6.1 `GET /bookings?email=&limit=&cursor=`: oldest first, case-insensitive email, `limit` from 1 to 50 (default 10, anything else → 400). The response is `{"bookings": [...], "next_cursor": ...}`. A non-numeric `cursor` → 400.
-- [ ] 6.2 `next_cursor` is the last id as a string, or `null` on the last page. Tests: walking every page yields every booking exactly once. Use at most 5 bookings per email with `limit=2`, so the test still passes once the Phase 7 limiter exists.
+- [x] 6.1 `GET /bookings?email=&limit=&cursor=`: oldest first, case-insensitive email, `limit` from 1 to 50 (default 10, anything else → 400). The response is `{"bookings": [...], "next_cursor": ...}`. A non-numeric `cursor` → 400.
+- [x] 6.2 `next_cursor` is the last id as a string, or `null` on the last page. Tests: walking every page yields every booking exactly once. Use at most 5 bookings per email with `limit=2`, so the test still passes once the Phase 7 limiter exists.
 - [ ] 6.3 Optional: a "My bookings" panel on the page. Skip it if time is short. Deploy.
 
 ## Phase 7: Level 5 (rate limit)

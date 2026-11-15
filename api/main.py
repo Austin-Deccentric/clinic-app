@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, Header, Request
+from fastapi import FastAPI, Header, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -199,6 +199,24 @@ def booking_id(id: str) -> int | None:
     if not (id.isascii() and id.isdigit()) or len(id) > 10 or int(id) > INT4_MAX:  # len first: int() refuses >4300 digits
         return None
     return int(id)
+
+
+@app.get("/bookings")
+async def list_bookings(email: Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True,
+                                                                min_length=1, max_length=254)],
+                        limit: Annotated[int, Query(ge=1, le=50)] = 10, cursor: str | None = None):
+    after = 0
+    if cursor is not None:
+        after = booking_id(cursor)
+        if after is None:
+            return error(400, "cursor is invalid")
+    # Ids only grow, so id order is oldest first. Fetch one extra row to know if another page exists.
+    q = select(Booking).where(Booking.email == email, Booking.id > after).order_by(Booking.id).limit(limit + 1)
+    async with Session() as s:
+        rows = (await s.scalars(q)).all()
+    more = len(rows) > limit
+    return {"bookings": [booking_out(b) for b in rows[:limit]],
+            "next_cursor": str(rows[limit - 1].id) if more else None}
 
 
 @app.get("/bookings/{id}")
