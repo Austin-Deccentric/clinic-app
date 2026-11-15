@@ -81,7 +81,7 @@ class IdempotencyKey(SQLModel, table=True):
     key: str = Field(primary_key=True)
     request_hash: str
     status_code: int | None = None
-    body: dict | None = Field(default=None, sa_type=JSONB)
+    body: dict | None = Field(default=None, sa_type=JSON)  # json, not jsonb: keeps key order so replays are byte-identical
 ```
 
 Request and response shapes (`NewBooking`, `BookingOut` with `id: str`, `SlotOut` with `available`) are plain SQLModel classes without `table=True`, and they match the OpenAPI field names exactly.

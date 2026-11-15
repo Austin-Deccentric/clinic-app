@@ -1,21 +1,24 @@
+import hashlib
 import hmac
+import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import StringConstraints
 from sqlalchemy import exists, insert, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import DataError, IntegrityError
 from sqlmodel import SQLModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from api.db import Session, engine
-from api.models import Booking, Slot
+from api.models import Booking, IdempotencyKey, Slot
 
 app = FastAPI()
 
@@ -123,7 +126,7 @@ async def health():
 async def reset(body: ResetIn):
     async with Session.begin() as s:
         # No RESTART IDENTITY: an id issued before a reset must never point at a later booking.
-        await s.execute(text("truncate bookings, slots"))
+        await s.execute(text("truncate bookings, idempotency_keys, slots"))
         s.add_all(Slot(**slot.model_dump()) for slot in body.slots)
     return {"ok": True}
 
@@ -146,25 +149,49 @@ async def list_slots(provider: str | None = None):
 
 
 @app.post("/bookings", status_code=201)
-async def create_booking(body: NewBooking):
+async def create_booking(body: NewBooking, request: Request,
+                         idempotency_key: Annotated[str | None, Header(max_length=255)] = None):
+    async with Session.begin() as s:
+        if idempotency_key:
+            request_hash = hashlib.sha256(json.dumps(await request.json(), sort_keys=True).encode()).hexdigest()
+            # Claim the key first. A concurrent duplicate blocks here until the first request commits,
+            # then hits the conflict and replays what that request stored.
+            claimed = await s.scalar(
+                pg_insert(IdempotencyKey).values(key=idempotency_key, request_hash=request_hash)
+                .on_conflict_do_nothing().returning(IdempotencyKey.key)
+            )
+            if claimed is None:
+                prior = await s.get(IdempotencyKey, idempotency_key)
+                if prior.request_hash != request_hash:
+                    return error(422, "idempotency key reused with a different body")
+                return JSONResponse(prior.body, status_code=prior.status_code)
+        status, out = await book_slot(s, body)
+        if idempotency_key:
+            await s.execute(update(IdempotencyKey).where(IdempotencyKey.key == idempotency_key)
+                            .values(status_code=status, body=out))
+    return JSONResponse(out, status_code=status)
+
+
+async def book_slot(s, body: NewBooking) -> tuple[int, dict]:
+    slot = await s.get(Slot, body.slot_id)
+    if slot is None:
+        return 404, {"error": "slot not found"}
+    if slot.start <= datetime.now(UTC):
+        return 400, {"error": "slot has already started"}
     try:
-        async with Session.begin() as s:
-            slot = await s.get(Slot, body.slot_id)
-            if slot is None:
-                return error(404, "slot not found")
-            if slot.start <= datetime.now(UTC):
-                return error(400, "slot has already started")
+        # Savepoint: a failed insert must not roll back the idempotency key row, so the 409 can be replayed.
+        async with s.begin_nested():
             # No check for an existing booking: the partial unique index decides, atomically.
             booking = await s.scalar(
                 insert(Booking).values(slot_id=body.slot_id, name=body.name, email=body.email).returning(Booking)
             )
     except IntegrityError as e:
         if e.orig.sqlstate == "23505":
-            return error(409, "slot already booked")
+            return 409, {"error": "slot already booked"}
         if e.orig.sqlstate == "23503":  # a concurrent /reset deleted the slot after we loaded it
-            return error(404, "slot not found")
+            return 404, {"error": "slot not found"}
         raise
-    return booking_out(booking)
+    return 201, booking_out(booking)
 
 
 def booking_id(id: str) -> int | None:
