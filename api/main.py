@@ -9,7 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import StringConstraints
-from sqlalchemy import exists, insert, select, text
+from sqlalchemy import exists, insert, select, text, update
 from sqlalchemy.exc import DataError, IntegrityError
 from sqlmodel import SQLModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -167,12 +167,38 @@ async def create_booking(body: NewBooking):
     return booking_out(booking)
 
 
-@app.get("/bookings/{id}")
-async def get_booking(id: str):  # str, not int: a bad id is 404, never a validation error
+def booking_id(id: str) -> int | None:
+    """Path ids arrive as str, not int: a bad id is 404, never a validation error."""
     if not (id.isascii() and id.isdigit()) or len(id) > 10 or int(id) > INT4_MAX:  # len first: int() refuses >4300 digits
+        return None
+    return int(id)
+
+
+@app.get("/bookings/{id}")
+async def get_booking(id: str):
+    bid = booking_id(id)
+    if bid is None:
         return error(404, "booking not found")
     async with Session() as s:
-        booking = await s.get(Booking, int(id))
+        booking = await s.get(Booking, bid)
     if booking is None:
         return error(404, "booking not found")
+    return booking_out(booking)
+
+
+@app.delete("/bookings/{id}")
+async def cancel_booking(id: str):
+    bid = booking_id(id)
+    if bid is None:
+        return error(404, "booking not found")
+    async with Session.begin() as s:
+        # One conditional UPDATE: of two simultaneous cancels, the second sees no confirmed row and gets 409.
+        booking = await s.scalar(
+            update(Booking).where(Booking.id == bid, Booking.status == "confirmed")
+            .values(status="cancelled").returning(Booking)
+        )
+        if booking is None:
+            if await s.get(Booking, bid) is None:
+                return error(404, "booking not found")
+            return error(409, "booking already cancelled")
     return booking_out(booking)
