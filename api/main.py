@@ -1,7 +1,9 @@
 from datetime import UTC, datetime
+from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import exists, insert, select, text
 from sqlmodel import SQLModel
 
@@ -9,6 +11,10 @@ from api.db import Session, engine
 from api.models import Booking, Slot
 
 app = FastAPI()
+
+# The built page (web/dist): only GET / and /assets, so unknown routes stay ordinary API 404s.
+DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
+app.mount("/assets", StaticFiles(directory=DIST / "assets", check_dir=False), name="assets")
 
 INT4_MAX = 2**31 - 1  # bookings.id is a Postgres integer
 
@@ -47,6 +53,11 @@ def booking_out(b: Booking) -> dict:
 
 def error(status: int, message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
+
+
+@app.get("/", include_in_schema=False)
+async def page():
+    return FileResponse(DIST / "index.html")
 
 
 @app.get("/health")
