@@ -10,7 +10,8 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, { ...init, headers: { ...headers, ...init?.headers } })
   const body = await res.json().catch(() => null)
   if (!res.ok || body == null)
-    throw Object.assign(new Error(body?.error ?? `Something went wrong (${res.status}). Please try again.`), { status: res.status })
+    throw Object.assign(new Error(body?.error ?? `Something went wrong (${res.status}). Please try again.`),
+      { status: res.status, retryAfter: Number(res.headers.get('Retry-After')) || 0 })
   return body
 }
 
@@ -45,6 +46,16 @@ export default function App() {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const nameInput = useRef<HTMLInputElement>(null)
+  // Seconds left before the server will take another attempt for this email (from a 429's Retry-After).
+  const [wait, setWait] = useState(0)
+
+  useEffect(() => {
+    if (wait <= 0) return
+    const t = setTimeout(() => setWait(wait - 1), 1000)
+    return () => clearTimeout(t)
+  }, [wait])
+
+  useEffect(() => setWait(0), [email]) // the limit is per email, so a different email may book at once
 
   // Filters for the slot picker: '' means any doctor; null day means "the first day with something open".
   const [doctor, setDoctor] = useState('')
@@ -113,7 +124,7 @@ export default function App() {
 
   async function book(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    if (!selected) return
+    if (!selected || submitting || wait > 0) return
     const body = JSON.stringify({ slot_id: selected.id, name, email })
     // Retrying the same body reuses its key, so a lost response can't book twice; an edited body gets a new key.
     if (attempt.current?.body !== body) attempt.current = { body, key: crypto.randomUUID() }
@@ -130,8 +141,9 @@ export default function App() {
       setSelected(null)
     } catch (err) {
       // Keep the key only when the outcome is unknown (network error, 5xx, 429); a definitive 4xx would just replay.
-      const status = (err as { status?: number }).status
+      const { status, retryAfter } = err as { status?: number; retryAfter?: number }
       if (status && status >= 400 && status < 500 && status !== 429) attempt.current = null
+      if (status === 429) setWait(retryAfter || 0)
       setFormError((err as Error).message)
     } finally {
       setSubmitting(false)
@@ -363,8 +375,13 @@ export default function App() {
                   </p>
                 )}
                 {formError && <p role="alert" className="rounded-control bg-danger-100 px-3 py-2 text-sm text-danger-600">{formError}</p>}
-                <button disabled={submitting || !current.available} className={primary}>
-                  {submitting ? 'Booking…' : `Book ${hhmm(current.start)}`}
+                {/* aria-disabled, not disabled, while busy: a disabled button would drop keyboard focus to <body>. */}
+                <button
+                  disabled={!current.available}
+                  aria-disabled={submitting || wait > 0}
+                  className={primary + ' aria-disabled:cursor-not-allowed aria-disabled:opacity-60'}
+                >
+                  {submitting ? 'Booking…' : wait > 0 ? `Try again in ${wait}s` : `Book ${hhmm(current.start)}`}
                 </button>
               </form>
             ) : (

@@ -4,13 +4,17 @@ import json
 import os
 import re
 import secrets
+import time
+from collections import defaultdict, deque
 from datetime import UTC, datetime
+from math import ceil
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, Header, Query, Request
+from fastapi import FastAPI, Header, Query, Request, Security
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 from pydantic import StringConstraints
 from sqlalchemy import exists, insert, select, text, true, update
@@ -22,7 +26,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from api.db import Session, engine
 from api.models import Booking, IdempotencyKey, Slot
 
-app = FastAPI()
+# Only puts the key in the schema so /docs gets an Authorize button; the middleware does the real check.
+app = FastAPI(dependencies=[Security(APIKeyHeader(name="X-API-Key", auto_error=False))])
 
 # The built page (web/dist): only GET / and /assets, so unknown routes stay ordinary API 404s.
 DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
@@ -37,6 +42,26 @@ assert API_KEY, "API_KEY must not be empty"  # fail closed: never boot without a
 # reaches the page's own routes, and only the bookings that browser made.
 SID = re.compile(r"[A-Za-z0-9_-]{43}")  # secrets.token_urlsafe(32)
 PAGE_ROUTES = re.compile(r"GET /slots|(GET|POST) /bookings|(GET|DELETE) /bookings/[^/]+")
+
+# shortcut: in-process, so only correct with one worker on one instance; move to Postgres or Redis if
+# we ever scale out.
+WINDOW, LIMIT, MAX_EMAILS = 60, 5, 10_000
+attempts: defaultdict[str, deque[float]] = defaultdict(deque)
+
+
+def check_rate(email: str) -> None:
+    """Record one booking attempt, or raise 429. No await inside, so it's atomic on the event loop."""
+    now = time.monotonic()
+    if len(attempts) > MAX_EMAILS:  # drop idle emails, so a stream of one-shot addresses can't grow memory forever
+        for k in [k for k, d in attempts.items() if d[-1] <= now - WINDOW]:
+            del attempts[k]
+    q = attempts[email]
+    while q and q[0] <= now - WINDOW:
+        q.popleft()
+    if len(q) >= LIMIT:
+        raise StarletteHTTPException(429, "too many booking attempts for this email",
+                                     headers={"Retry-After": str(max(1, ceil(q[0] + WINDOW - now)))})
+    q.append(now)
 
 
 class SlotIn(SQLModel):
@@ -110,7 +135,7 @@ async def internal_error(request, exc):
 async def require_api_key(request, call_next):
     # Runs before routing and body parsing, so a bad key is 401 even on unknown routes or bad JSON.
     path = request.url.path
-    if request.method == "GET" and (path in ("/", "/health") or path.startswith("/assets/")):
+    if request.method == "GET" and (path in ("/", "/health", "/docs", "/openapi.json") or path.startswith("/assets/")):
         return await call_next(request)
     request.state.sid = None
     if hmac.compare_digest(request.headers.get("x-api-key", "").encode(), API_KEY.encode()):
@@ -152,6 +177,7 @@ async def reset(body: ResetIn):
         # No RESTART IDENTITY: an id issued before a reset must never point at a later booking.
         await s.execute(text("truncate bookings, idempotency_keys, slots"))
         s.add_all(Slot(**slot.model_dump()) for slot in body.slots)
+    attempts.clear()
     return {"ok": True}
 
 
@@ -189,6 +215,8 @@ async def create_booking(body: NewBooking, request: Request,
                 if prior.request_hash != request_hash:
                     return error(422, "idempotency key reused with a different body")
                 return JSONResponse(prior.body, status_code=prior.status_code)
+        # After the replay (replays don't count); raising inside begin() rolls back a fresh key claim.
+        check_rate(body.email)
         status, out = await book_slot(s, body, request.state.sid)
         if idempotency_key:
             await s.execute(update(IdempotencyKey).where(IdempotencyKey.key == idempotency_key)

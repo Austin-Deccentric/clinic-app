@@ -29,7 +29,7 @@ def assert_error(r, status):
 # --- auth ---
 
 KEYED = [("GET", "/slots"), ("POST", "/reset"), ("POST", "/bookings"), ("GET", "/bookings/1"),
-         ("GET", "/nope"), ("GET", "/docs")]
+         ("GET", "/nope")]
 
 
 @pytest.mark.parametrize("headers", [{}, {"X-API-Key": "wrong"}], ids=["no_key", "wrong_key"])
@@ -40,6 +40,11 @@ def test_auth_required(method, path, headers):
 
 def test_health_needs_no_key():
     assert nokey.get("/health").status_code == 200
+
+
+def test_docs_need_no_key():
+    assert nokey.get("/docs").status_code == 200
+    assert "X-API-Key" in nokey.get("/openapi.json").text  # the Authorize button
 
 
 def test_auth_runs_before_body_parsing():
