@@ -25,7 +25,7 @@ clinic-app/
   alembic.ini
   web/              Vite React app (bun, bun.lock) → builds to web/dist
   tests/            pytest contract checks per level
-  Dockerfile        stage 1: oven/bun, `ARG VITE_API_KEY`, runs `bun install && bun run build` → web/dist
+  Dockerfile        stage 1: oven/bun, runs `bun install && bun run build` → web/dist
                     stage 2: python:3.12-slim + uv binary, `uv sync --frozen`, serves api + dist
                              with `uvicorn api.main:app --host 0.0.0.0 --port $PORT` (one worker)
 ```
@@ -35,7 +35,7 @@ clinic-app/
 - `DATABASE_URL`: the Neon **pooled** connection string as `postgresql+psycopg://...`, used by the app. Neon's pooler doesn't keep prepared statements between queries, so the engine sets `connect_args={"prepare_threshold": None}`.
 - `DATABASE_URL_DIRECT`: the Neon **direct** (non-pooled) string, used by Alembic only. Migrations take locks and need a real session.
 - `API_KEY`: the key we choose and submit in the form.
-- `VITE_API_KEY`: the same key, baked into the page at build time (see Known trade-offs). The Dockerfile's bun stage must declare `ARG VITE_API_KEY` and pass it to the build, or the bundle ships an empty key. After the first deploy, check that the page's requests carry the key.
+- No key in the page. `GET /` sets a random `sid` cookie (HttpOnly, Secure, SameSite=Strict). Without a key, the middleware accepts that cookie on the page's routes only (`GET /slots`, `GET`/`POST /bookings`, `GET`/`DELETE /bookings/{id}`), and those routes only see bookings whose `session` matches it. In dev, the Vite proxy adds the key server-side from `API_KEY`.
 
 ## How each level is enforced
 
@@ -93,7 +93,7 @@ Request and response shapes (`NewBooking`, `BookingOut` with `id: str`, `SlotOut
 
 ## Known trade-offs
 
-- **The API key ships in the page's JS bundle.** The page has to call a keyed API, and a public page can't keep a secret. That's acceptable here because the key is submitted to the graders anyway. *Upgrade path:* a server-side proxy route with a session.
+- **The page proves which browser you are, not who you are.** A page session reaches only the bookings it made, so clearing cookies or switching device loses the "My bookings" list (the bookings themselves stay). *Upgrade path:* a one-time code sent to the email. (Until Phase 6 the key shipped in the JS bundle, which let anyone list or cancel any booking.)
 - **The rate limiter lives in memory, so it requires one uvicorn worker on one Render instance**, and a restart resets the window (at most one minute of leniency). *Upgrade path:* a Postgres or Redis counter if we ever scale out.
 - **Free Render instances sleep, and the first request after idle takes about 30s.** Graders may time out. *Mitigation:* use the paid Starter instance, or keep the service warm with an external ping to `/health` every 10 minutes, for as long as the submission is under review.
 - **Neon auto-suspends**, adding about 1s to the first query after idle. That's acceptable.

@@ -3,7 +3,8 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 type Slot = { id: string; provider: string; start: string; end: string; available: boolean }
 type Booking = { id: string; slot_id: string; name: string; email: string; status: string; created_at: string }
 
-const headers = { 'Content-Type': 'application/json', 'X-API-Key': import.meta.env.VITE_API_KEY ?? '' }
+// No API key here: the page authenticates with the HttpOnly sid cookie the server sets on GET /.
+const headers = { 'Content-Type': 'application/json' }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, { ...init, headers: { ...headers, ...init?.headers } })

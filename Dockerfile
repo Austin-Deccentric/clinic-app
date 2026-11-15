@@ -3,8 +3,6 @@ WORKDIR /web
 COPY web/package.json web/bun.lock ./
 RUN bun install --frozen-lockfile
 COPY web ./
-# The key is baked into the bundle at build time; Render passes it as a build arg.
-ARG VITE_API_KEY
 RUN bun run build
 
 FROM python:3.12-slim

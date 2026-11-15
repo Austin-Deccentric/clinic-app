@@ -19,12 +19,14 @@ class Booking(SQLModel, table=True):
         Index("one_confirmed_per_slot", "slot_id", unique=True,
               postgresql_where=text("status = 'confirmed'")),
         Index("bookings_by_email", "email", "id"),
+        Index("bookings_by_session", "session", "id"),
         CheckConstraint("status in ('confirmed','cancelled')", name="bookings_status_check"),
     )
     id: int | None = Field(default=None, primary_key=True)  # auto-incrementing; sent to clients as a string
     slot_id: str = Field(foreign_key="slots.id")
     name: str
     email: str  # stored trimmed and lower-cased
+    session: str | None = None  # the page's sid cookie for page bookings; null for API-key callers
     status: str = "confirmed"
     created_at: datetime | None = Field(
         default=None,

@@ -2,6 +2,8 @@ import hashlib
 import hmac
 import json
 import os
+import re
+import secrets
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
@@ -11,7 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import StringConstraints
-from sqlalchemy import exists, insert, select, text, update
+from sqlalchemy import exists, insert, select, text, true, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import DataError, IntegrityError
 from sqlmodel import SQLModel
@@ -30,6 +32,11 @@ INT4_MAX = 2**31 - 1  # bookings.id is a Postgres integer
 
 API_KEY = os.environ["API_KEY"]
 assert API_KEY, "API_KEY must not be empty"  # fail closed: never boot without auth
+
+# The page never holds the API key. GET / gives each browser a random sid cookie instead, which only
+# reaches the page's own routes, and only the bookings that browser made.
+SID = re.compile(r"[A-Za-z0-9_-]{43}")  # secrets.token_urlsafe(32)
+PAGE_ROUTES = re.compile(r"GET /slots|(GET|POST) /bookings|(GET|DELETE) /bookings/[^/]+")
 
 
 class SlotIn(SQLModel):
@@ -105,14 +112,29 @@ async def require_api_key(request, call_next):
     path = request.url.path
     if request.method == "GET" and (path in ("/", "/health") or path.startswith("/assets/")):
         return await call_next(request)
-    if not hmac.compare_digest(request.headers.get("x-api-key", "").encode(), API_KEY.encode()):
-        return error(401, "missing or invalid API key")
-    return await call_next(request)
+    request.state.sid = None
+    if hmac.compare_digest(request.headers.get("x-api-key", "").encode(), API_KEY.encode()):
+        return await call_next(request)
+    sid = request.cookies.get("sid", "")
+    if SID.fullmatch(sid) and PAGE_ROUTES.fullmatch(f"{request.method} {path}"):
+        request.state.sid = sid
+        return await call_next(request)
+    return error(401, "missing or invalid API key")
+
+
+def mine(request: Request):
+    """Page requests see only their own browser's bookings; API-key requests see all of them."""
+    sid = request.state.sid
+    return Booking.session == sid if sid else true()
 
 
 @app.get("/", include_in_schema=False)
-async def page():
-    return FileResponse(DIST / "index.html")
+async def page(request: Request):
+    res = FileResponse(DIST / "index.html")
+    if not SID.fullmatch(request.cookies.get("sid", "")):
+        res.set_cookie("sid", secrets.token_urlsafe(32), max_age=365 * 86400,
+                       httponly=True, secure=True, samesite="strict")  # Strict: no cross-site request carries it
+    return res
 
 
 @app.get("/health")
@@ -165,14 +187,14 @@ async def create_booking(body: NewBooking, request: Request,
                 if prior.request_hash != request_hash:
                     return error(422, "idempotency key reused with a different body")
                 return JSONResponse(prior.body, status_code=prior.status_code)
-        status, out = await book_slot(s, body)
+        status, out = await book_slot(s, body, request.state.sid)
         if idempotency_key:
             await s.execute(update(IdempotencyKey).where(IdempotencyKey.key == idempotency_key)
                             .values(status_code=status, body=out))
     return JSONResponse(out, status_code=status)
 
 
-async def book_slot(s, body: NewBooking) -> tuple[int, dict]:
+async def book_slot(s, body: NewBooking, sid: str | None) -> tuple[int, dict]:
     slot = await s.get(Slot, body.slot_id)
     if slot is None:
         return 404, {"error": "slot not found"}
@@ -183,7 +205,8 @@ async def book_slot(s, body: NewBooking) -> tuple[int, dict]:
         async with s.begin_nested():
             # No check for an existing booking: the partial unique index decides, atomically.
             booking = await s.scalar(
-                insert(Booking).values(slot_id=body.slot_id, name=body.name, email=body.email).returning(Booking)
+                insert(Booking).values(slot_id=body.slot_id, name=body.name, email=body.email, session=sid)
+                .returning(Booking)
             )
     except IntegrityError as e:
         if e.orig.sqlstate == "23505":
@@ -204,14 +227,15 @@ def booking_id(id: str) -> int | None:
 @app.get("/bookings")
 async def list_bookings(email: Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True,
                                                                 min_length=1, max_length=254)],
-                        limit: Annotated[int, Query(ge=1, le=50)] = 10, cursor: str | None = None):
+                        request: Request, limit: Annotated[int, Query(ge=1, le=50)] = 10,
+                        cursor: str | None = None):
     after = 0
     if cursor is not None:
         after = booking_id(cursor)
         if after is None:
             return error(400, "cursor is invalid")
     # Ids only grow, so id order is oldest first. Fetch one extra row to know if another page exists.
-    q = select(Booking).where(Booking.email == email, Booking.id > after).order_by(Booking.id).limit(limit + 1)
+    q = select(Booking).where(Booking.email == email, Booking.id > after, mine(request)).order_by(Booking.id).limit(limit + 1)
     async with Session() as s:
         rows = (await s.scalars(q)).all()
     more = len(rows) > limit
@@ -220,30 +244,30 @@ async def list_bookings(email: Annotated[str, StringConstraints(strip_whitespace
 
 
 @app.get("/bookings/{id}")
-async def get_booking(id: str):
+async def get_booking(id: str, request: Request):
     bid = booking_id(id)
     if bid is None:
         return error(404, "booking not found")
     async with Session() as s:
-        booking = await s.get(Booking, bid)
+        booking = await s.scalar(select(Booking).where(Booking.id == bid, mine(request)))
     if booking is None:
         return error(404, "booking not found")
     return booking_out(booking)
 
 
 @app.delete("/bookings/{id}")
-async def cancel_booking(id: str):
+async def cancel_booking(id: str, request: Request):
     bid = booking_id(id)
     if bid is None:
         return error(404, "booking not found")
     async with Session.begin() as s:
         # One conditional UPDATE: of two simultaneous cancels, the second sees no confirmed row and gets 409.
         booking = await s.scalar(
-            update(Booking).where(Booking.id == bid, Booking.status == "confirmed")
+            update(Booking).where(Booking.id == bid, Booking.status == "confirmed", mine(request))
             .values(status="cancelled").returning(Booking)
         )
         if booking is None:
-            if await s.get(Booking, bid) is None:
+            if await s.scalar(select(Booking.id).where(Booking.id == bid, mine(request))) is None:
                 return error(404, "booking not found")
             return error(409, "booking already cancelled")
     return booking_out(booking)
