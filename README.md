@@ -51,10 +51,10 @@ They call `POST /reset`, so **they wipe the database they point at**.
 
 ## Demo data
 
-`scripts/demo-slots.json` holds 12 slots with three providers, on weekdays between 2026-12-01 and 2027-01-29. To load it (this replaces all slots and deletes all bookings):
+`scripts/demo_seed.py` prints a random set of 30-minute slots for every weekday in the next 6 days (UTC): each day has 1 to 3 of the three doctors, with 2 to 3 slots each, so every slot is within a week of the day you load it. To load them (this replaces all slots and deletes all bookings):
 
 ```sh
-curl -sS -X POST "$BASE_URL/reset" -H "X-API-Key: $API_KEY" -H 'Content-Type: application/json' --data @scripts/demo-slots.json
+curl -sS -X POST "$BASE_URL/reset" -H "X-API-Key: $API_KEY" -H 'Content-Type: application/json' --data @<(uv run python scripts/demo_seed.py)
 ```
 
 ## The two biggest decisions
