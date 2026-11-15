@@ -33,7 +33,7 @@ Checks live in `tests/test_level<N>.py` and run with `BASE_URL=... uv run pytest
 - [x] 3.1 API-key middleware: 401 `{"error"}` before body parsing. Exempt only `GET /`, the page's assets, and `/health`. Have the page send `VITE_API_KEY`: add `ARG VITE_API_KEY` to the Dockerfile's bun stage, and after deploying, check that the page's requests carry the key.
 - [x] 3.2 Make every error `{"error": ...}`: validation → **400**, bad JSON → 400, unknown routes → 404.
 - [x] 3.3 Booking validation: required and non-empty fields, email format, trimming, lower-case email. Unknown slot → 404. Already-started slot → 400.
-- [ ] 3.4 Write `test_level2.py`, then deploy.
+- [x] 3.4 Write `test_level2.py`, then deploy.
 
 ## Phase 4: Level 3 (no double booking, cancel)
 - [ ] 4.1 Confirm in Neon that the partial unique index exists (`\d bookings`), then map `IntegrityError` → 409.
