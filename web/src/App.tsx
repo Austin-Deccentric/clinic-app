@@ -15,15 +15,24 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return body
 }
 
+// All times are shown in UTC, as the API stores them.
 const fmt = (iso: string, opts: Intl.DateTimeFormatOptions) =>
   new Date(iso).toLocaleString('en-GB', { timeZone: 'UTC', ...opts })
-
-const when = (s: Slot) =>
-  `${fmt(s.start, { weekday: 'short', day: 'numeric', month: 'short' })}, ` +
-  `${fmt(s.start, { hour: '2-digit', minute: '2-digit' })}–${fmt(s.end, { hour: '2-digit', minute: '2-digit' })} UTC`
+const hhmm = (iso: string) => fmt(iso, { hour: '2-digit', minute: '2-digit' })
+const dayKey = (iso: string) => new Date(iso).toISOString().slice(0, 10)
+const longDay = (iso: string) => fmt(iso, { weekday: 'long', day: 'numeric', month: 'long' })
+const isMorning = (iso: string) => new Date(iso).getUTCHours() < 12
 
 // Stable identity, so React calls it once on mount rather than on every re-render.
 const focusOnMount = (el: HTMLElement | null) => el?.focus()
+
+// Shared control styles. Colours, radii and shadows come from tokens.css.
+const field =
+  'mt-1.5 block min-h-11 w-full rounded-control border border-line-strong bg-surface px-3 text-base font-normal text-ink-900'
+const primary =
+  'min-h-12 rounded-control bg-nitrile-600 px-5 text-lg font-bold text-white transition-colors duration-(--duration-quick) hover:bg-nitrile-700 disabled:cursor-not-allowed disabled:opacity-60'
+const secondary =
+  'min-h-11 rounded-control border border-line-strong bg-surface px-4 font-bold text-ink-900 transition-colors duration-(--duration-quick) hover:border-ink-500 disabled:cursor-not-allowed disabled:opacity-60'
 
 export default function App() {
   const [slots, setSlots] = useState<Slot[] | null>(null)
@@ -36,6 +45,7 @@ export default function App() {
   // Lives here, not in the form, so switching slots (e.g. after a 409) keeps what the user typed.
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
+  const nameInput = useRef<HTMLInputElement>(null)
   // Seconds left before the server will take another attempt for this email (from a 429's Retry-After).
   const [wait, setWait] = useState(0)
 
@@ -46,6 +56,10 @@ export default function App() {
   }, [wait])
 
   useEffect(() => setWait(0), [email]) // the limit is per email, so a different email may book at once
+
+  // Filters for the slot picker: '' means any doctor; null day means "the first day with something open".
+  const [doctor, setDoctor] = useState('')
+  const [day, setDay] = useState<string | null>(null)
 
   const loadSlots = () =>
     api<{ slots: Slot[] }>('/slots')
@@ -79,8 +93,12 @@ export default function App() {
     }
   }
 
+  const slotOf = (id: string) => slots?.find((s) => s.id === id)
+
   async function cancel(b: Booking) {
-    if (!confirm(`Cancel booking ${b.id}?`)) return
+    const s = slotOf(b.slot_id)
+    const what = s ? `your ${hhmm(s.start)} appointment on ${longDay(s.start)}` : `booking ${b.id}`
+    if (!confirm(`Cancel ${what}?`)) return
     setCancelling(b.id)
     setMineError('')
     const replace = (nb: Booking) => setMine((prev) => prev?.map((x) => (x.id === nb.id ? nb : x)) ?? null)
@@ -96,7 +114,13 @@ export default function App() {
     }
   }
 
-  const slotOf = (id: string) => slots?.find((s) => s.id === id)
+  function pick(s: Slot) {
+    setSelected(s)
+    setConfirmed(null)
+    setFormError('')
+    // Focusing the name field also scrolls the form into view on a phone, where it sits below the times.
+    requestAnimationFrame(() => nameInput.current?.focus())
+  }
 
   async function book(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -127,139 +151,325 @@ export default function App() {
     }
   }
 
+  // --- Slot picker: doctor filter → day strip → that day's times, split into morning and afternoon.
+  const doctors = [...new Set(slots?.map((s) => s.provider))].sort()
+  const shown = (slots ?? []).filter((s) => !doctor || s.provider === doctor)
+  const days = [...new Set(slots?.map((s) => dayKey(s.start)))].sort().map((key) => {
+    const first = slots!.find((s) => dayKey(s.start) === key)!
+    return {
+      key,
+      label: longDay(first.start),
+      dow: fmt(first.start, { weekday: 'short' }),
+      dom: fmt(first.start, { day: 'numeric' }),
+      open: shown.filter((s) => s.available && dayKey(s.start) === key).length,
+    }
+  })
+  const activeDay =
+    days.find((d) => d.key === day && d.open > 0) ?? days.find((d) => d.open > 0) ?? days[0]
+  const today = shown
+    .filter((s) => activeDay && dayKey(s.start) === activeDay.key)
+    .sort((a, b) => a.start.localeCompare(b.start) || a.provider.localeCompare(b.provider))
+  const parts = [
+    { label: 'Morning', slots: today.filter((s) => isMorning(s.start)) },
+    { label: 'Afternoon', slots: today.filter((s) => !isMorning(s.start)) },
+  ].filter((p) => p.slots.length)
+  const todayOpen = today.filter((s) => s.available).length
+
+  // The selected slot as it is now, so the form knows if someone else just took it.
+  const current = selected && (slotOf(selected.id) ?? selected)
+
   return (
-    <main className="mx-auto max-w-xl px-4 py-8 text-slate-900">
-      <h1 className="text-2xl font-semibold">Book an appointment</h1>
+    <div className="min-h-dvh bg-paper text-ink-900">
+      <div className="mx-auto max-w-page px-4 pt-6 pb-16 sm:px-10 sm:pt-12">
+        <header className="flex items-center gap-2.5">
+          <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
+            <rect width="28" height="28" rx="7" className="fill-nitrile-600" />
+            <path d="M14 7v14M7 14h14" stroke="#fff" strokeWidth="3.2" strokeLinecap="round" />
+          </svg>
+          <span className="text-lg font-bold">Clinic booking</span>
+        </header>
 
-      {confirmed ? (
-        <section className="mt-6 rounded-lg border border-emerald-300 bg-emerald-50 p-4" aria-live="polite">
-          <h2 ref={focusOnMount} tabIndex={-1} className="text-lg font-semibold text-emerald-900 focus:outline-none">Booking confirmed</h2>
-          <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-            <dt className="text-slate-600">Booking ID</dt>
-            <dd className="font-mono">{confirmed.booking.id}</dd>
-            <dt className="text-slate-600">Provider</dt>
-            <dd>{confirmed.slot.provider}</dd>
-            <dt className="text-slate-600">Time</dt>
-            <dd>{when(confirmed.slot)}</dd>
-          </dl>
-          <button
-            className="mt-4 min-h-11 rounded-md bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
-            onClick={() => setConfirmed(null)}
-          >
-            Book another slot
-          </button>
-        </section>
-      ) : (
-        <section className="mt-6">
-          <h2 className="text-sm font-medium text-slate-600">Choose a slot</h2>
-          {loadError && (
-            <p className="mt-3 text-sm text-red-700">
-              Couldn't load slots: {loadError}{' '}
-              <button className="underline" onClick={loadSlots}>Try again</button>
-            </p>
-          )}
-          {!slots && !loadError && <p className="mt-3 text-sm text-slate-500">Loading slots…</p>}
-          {slots?.length === 0 && <p className="mt-3 text-sm text-slate-500">No slots are open right now.</p>}
+        <div className="mt-10 max-w-prose">
+          <h1 className="text-[1.75rem] leading-tight font-black tracking-tight sm:text-display">Book an appointment</h1>
+          <p className="mt-2.5 text-lg text-ink-500">
+            Pick a time, add your name and email, and you’re booked. All times are UTC.
+          </p>
+        </div>
 
-          <ul className="mt-3 space-y-2">
-            {slots?.map((s) => (
-              <li key={s.id}>
-                <button
-                  disabled={!s.available}
-                  aria-pressed={selected?.id === s.id}
-                  onClick={() => { setSelected(s); setFormError('') }}
-                  className="flex min-h-11 w-full items-center justify-between rounded-md border border-slate-300 px-4 py-2 text-left hover:border-slate-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-600 aria-pressed:border-slate-900 aria-pressed:bg-slate-900 aria-pressed:text-white"
-                >
-                  <span>
-                    <span className="block font-medium">{s.provider}</span>
-                    <span className="block text-sm">{when(s)}</span>
-                  </span>
-                  {!s.available && <span className="text-xs font-medium uppercase">Booked</span>}
-                </button>
-
-                {selected?.id === s.id && (
-                  <form onSubmit={book} className="mt-2 space-y-3 rounded-md border border-slate-200 bg-slate-50 p-4">
-                    <label className="block text-sm font-medium">
-                      Name
-                      <input name="name" required autoComplete="name" autoFocus value={name} onChange={(e) => setName(e.target.value)} className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-normal" />
-                    </label>
-                    <label className="block text-sm font-medium">
-                      Email
-                      <input name="email" type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-normal" />
-                    </label>
-                    {formError && <p role="alert" className="text-sm text-red-700">{formError}</p>}
-                    {/* aria-disabled, not disabled, while busy: a disabled button would drop keyboard focus to <body>. */}
-                    <button
-                      disabled={!s.available}
-                      aria-disabled={submitting || wait > 0}
-                      className="min-h-11 w-full rounded-md bg-slate-900 px-4 py-2 font-medium text-white hover:bg-slate-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:opacity-60 aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
-                    >
-                      {submitting ? 'Booking…' : wait > 0 ? `Try again in ${wait}s` : 'Book this slot'}
-                    </button>
-                  </form>
-                )}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      <section className="mt-10 border-t border-slate-200 pt-6">
-        <h2 className="text-lg font-semibold">My bookings</h2>
-        <form onSubmit={(e) => { e.preventDefault(); loadMine() }} className="mt-3 flex flex-wrap items-end gap-2">
-          <label className="block min-w-0 flex-1 text-sm font-medium">
-            Email
-            <input name="mine-email" type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-normal" />
-          </label>
-          <button
-            disabled={mineLoading}
-            className="min-h-11 rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:opacity-60"
-          >
-            Show my bookings
-          </button>
-        </form>
-
-        {mineError && <p role="alert" className="mt-3 text-sm text-red-700">{mineError}</p>}
-        {mine?.length === 0 && <p className="mt-3 text-sm text-slate-500">No bookings for this email yet.</p>}
-
-        <ul className="mt-3 space-y-2">
-          {mine?.map((b) => {
-            const s = slotOf(b.slot_id)
-            const active = b.status === 'confirmed'
-            return (
-              <li key={b.id} className="flex items-center justify-between gap-3 rounded-md border border-slate-300 px-4 py-2">
-                <span className="min-w-0">
-                  <span className="block font-medium">{s ? s.provider : b.slot_id}</span>
-                  {s && <span className="block text-sm">{when(s)}</span>}
-                  <span className="block text-xs text-slate-600">
-                    {active ? 'Confirmed' : 'Cancelled'} · <span className="font-mono">#{b.id}</span>
-                  </span>
-                </span>
-                {active && (
-                  <button
-                    onClick={() => cancel(b)}
-                    aria-label={`Cancel booking ${b.id}`}
-                    disabled={cancelling === b.id}
-                    className="min-h-11 shrink-0 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:border-slate-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:opacity-60"
+        <div className="mt-9 flex flex-wrap items-start gap-8">
+          {/* Times */}
+          <section aria-labelledby="choose-day" className="min-w-0 flex-[999_1_560px]">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <h2 id="choose-day" className="text-xl font-bold">Choose a day</h2>
+              {doctors.length > 1 && (
+                <label className="flex items-center gap-2.5 text-sm font-medium">
+                  Doctor
+                  <select
+                    value={doctor}
+                    onChange={(e) => setDoctor(e.target.value)}
+                    className="min-h-11 min-w-44 cursor-pointer rounded-control border border-line-strong bg-surface px-3 text-base text-ink-900"
                   >
-                    {cancelling === b.id ? 'Cancelling…' : 'Cancel'}
-                  </button>
-                )}
-              </li>
-            )
-          })}
-        </ul>
+                    <option value="">Any doctor</option>
+                    {doctors.map((d) => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </label>
+              )}
+            </div>
 
-        {nextCursor && (
-          <button
-            onClick={() => loadMine(nextCursor)}
-            disabled={mineLoading}
-            className="mt-3 min-h-11 w-full rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium hover:border-slate-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:opacity-60"
-          >
-            {mineLoading ? 'Loading…' : 'Load more'}
-          </button>
-        )}
-      </section>
-    </main>
+            {loadError && (
+              <p role="alert" className="mt-4 rounded-control bg-danger-100 px-4 py-3 text-danger-600">
+                Couldn’t load open times: {loadError}{' '}
+                <button className="font-bold underline" onClick={loadSlots}>Try again</button>
+              </p>
+            )}
+            {!slots && !loadError && (
+              <div aria-hidden="true" className="mt-4 flex gap-2">
+                {Array.from({ length: 6 }, (_, i) => (
+                  <div key={i} className="h-21 w-19 shrink-0 animate-pulse rounded-control bg-taken" />
+                ))}
+              </div>
+            )}
+            {!slots && !loadError && <p className="sr-only" role="status">Loading open times…</p>}
+            {slots?.length === 0 && (
+              <div className="mt-4 rounded-panel border-2 border-dashed border-line-strong p-5">
+                <p className="font-bold">No times are open right now</p>
+                <p className="mt-1 text-ink-500">New times are added regularly. Check back soon.</p>
+              </div>
+            )}
+
+            {days.length > 0 && (
+              <div role="group" aria-label="Days" className="-mx-0.5 mt-3.5 flex gap-2 overflow-x-auto px-0.5 pt-0.5 pb-2">
+                {days.map((d) => {
+                  const on = d.key === activeDay?.key
+                  return (
+                    <button
+                      key={d.key}
+                      disabled={d.open === 0}
+                      aria-pressed={on}
+                      aria-label={`${d.label}, ${d.open || 'none'} open`}
+                      onClick={() => setDay(d.key)}
+                      className={
+                        'min-h-21 w-19 shrink-0 rounded-control border px-1.5 py-2.5 text-center transition-colors duration-(--duration-quick) ' +
+                        (on
+                          ? 'border-ink-900 bg-ink-900 text-white'
+                          : d.open
+                            ? 'border-line-strong bg-surface hover:border-ink-500'
+                            : 'cursor-not-allowed border-dashed border-line-strong text-ink-500')
+                      }
+                    >
+                      <span className="block text-[0.8125rem]">{d.dow}</span>
+                      <span className="block text-2xl leading-tight font-black">{d.dom}</span>
+                      <span className={'mt-1 block text-xs ' + (on ? 'text-nitrile-100' : d.open ? 'font-bold text-nitrile-700' : 'text-ink-500')}>
+                        {d.open ? `${d.open} open` : 'None'}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
+            {activeDay && (
+              <>
+                <div className="mt-5 flex items-baseline justify-between gap-3 border-b border-line pb-2.5">
+                  <h3 className="text-lg font-bold">{activeDay.label}</h3>
+                  <span className="text-sm text-ink-500">
+                    {todayOpen === 1 ? '1 open time' : `${todayOpen} open times`}
+                  </span>
+                </div>
+
+                {parts.map((p) => (
+                  <div key={p.label} className="mt-4.5">
+                    <p className="mb-2.5 text-sm font-bold text-ink-700">{p.label}</p>
+                    <ul className="grid grid-cols-[repeat(auto-fill,minmax(7.5rem,1fr))] gap-2.5">
+                      {p.slots.map((s) => {
+                        const on = selected?.id === s.id
+                        return (
+                          <li key={s.id}>
+                            <button
+                              disabled={!s.available}
+                              aria-pressed={on}
+                              aria-label={`${hhmm(s.start)} with ${s.provider}${s.available ? '' : ', booked'}`}
+                              onClick={() => pick(s)}
+                              className={
+                                'min-h-16 w-full rounded-control px-3 py-2.5 text-left transition-colors duration-(--duration-quick) ' +
+                                (!s.available
+                                  ? 'cursor-not-allowed border border-taken bg-taken text-ink-500'
+                                  : on
+                                    ? 'border-2 border-card-500 bg-card-300 px-[11px] py-[9px] text-card-ink'
+                                    : 'border border-line-strong bg-surface hover:border-nitrile-600')
+                              }
+                            >
+                              <span className={'block text-[1.1875rem] leading-tight font-black ' + (s.available ? '' : 'line-through decoration-ink-300')}>
+                                {hhmm(s.start)}
+                              </span>
+                              <span className={'mt-0.5 block text-[0.8125rem] ' + (on ? '' : 'text-ink-500')}>
+                                {s.available ? s.provider : 'Booked'}
+                              </span>
+                            </button>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </div>
+                ))}
+
+                {today.length === 0 && (
+                  <div className="mt-4.5 rounded-panel border-2 border-dashed border-line-strong p-5">
+                    <p className="font-bold">{doctor || 'No doctor'} has no times on {activeDay.label.split(' ')[0]}.</p>
+                    <p className="mt-1 text-ink-500">Pick another day, or choose Any doctor.</p>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+
+          {/* Your appointment */}
+          <aside aria-label="Your appointment" className="w-full min-w-0 flex-[1_1_320px]">
+            {confirmed ? (
+              <div aria-live="polite">
+                <h2
+                  ref={focusOnMount}
+                  tabIndex={-1}
+                  className="mb-3.5 flex items-center gap-2 font-bold text-ok-600 focus:outline-none"
+                >
+                  <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
+                    <circle cx="10" cy="10" r="9" className="fill-ok-100" />
+                    <path d="M6 10.5l2.6 2.6L14 7.6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  You’re booked
+                </h2>
+                <div className="relative animate-card-in rounded-card bg-card-300 px-6 pt-6 pb-5.5 text-card-ink shadow-card">
+                  <span aria-hidden="true" className="absolute top-5 right-5 size-3.5 rounded-full bg-paper shadow-[inset_0_1px_2px_rgb(74_59_12/0.35)]" />
+                  <p className="text-sm font-bold">Your appointment</p>
+                  <p className="mt-4.5 text-lg font-medium">{longDay(confirmed.slot.start)}</p>
+                  <p className="mt-0.5 text-time font-black">{hhmm(confirmed.slot.start)}</p>
+                  <p className="mt-1.5 text-sm">until {hhmm(confirmed.slot.end)} UTC</p>
+                  <p className="mt-4 text-[1.1875rem] font-bold">{confirmed.slot.provider}</p>
+                  <div className="mt-5 flex items-baseline justify-between gap-3 border-t-2 border-dashed border-card-500 pt-4">
+                    <span className="text-sm">Booking reference</span>
+                    <span className="font-mono text-[1.75rem] font-medium">{confirmed.booking.id}</span>
+                  </div>
+                </div>
+                <button className={secondary + ' mt-5 min-h-12 w-full'} onClick={() => setConfirmed(null)}>
+                  Book another time
+                </button>
+              </div>
+            ) : current ? (
+              <form onSubmit={book} className="flex flex-col gap-4 rounded-panel bg-surface p-6 shadow-panel">
+                <div className="rounded-control bg-card-100 px-4 py-3.5 text-card-ink">
+                  <p className="text-sm">{longDay(current.start)}</p>
+                  <p className="mt-0.5 text-2xl font-black">{hhmm(current.start)}–{hhmm(current.end)}</p>
+                  <p className="mt-0.5 font-bold">{current.provider}</p>
+                </div>
+                <label className="block text-sm font-medium">
+                  Name
+                  <input ref={nameInput} name="name" required autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} className={field} />
+                </label>
+                <label className="block text-sm font-medium">
+                  Email
+                  <input name="email" type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className={field} />
+                </label>
+                {!current.available && !formError && (
+                  <p role="alert" className="rounded-control bg-danger-100 px-3 py-2 text-sm text-danger-600">
+                    Someone just booked this time. Pick another one.
+                  </p>
+                )}
+                {formError && <p role="alert" className="rounded-control bg-danger-100 px-3 py-2 text-sm text-danger-600">{formError}</p>}
+                {/* aria-disabled, not disabled, while busy: a disabled button would drop keyboard focus to <body>. */}
+                <button
+                  disabled={!current.available}
+                  aria-disabled={submitting || wait > 0}
+                  className={primary + ' aria-disabled:cursor-not-allowed aria-disabled:opacity-60'}
+                >
+                  {submitting ? 'Booking…' : wait > 0 ? `Try again in ${wait}s` : `Book ${hhmm(current.start)}`}
+                </button>
+              </form>
+            ) : (
+              <div className="rounded-panel border-2 border-dashed border-line-strong px-6 py-7">
+                <p className="text-lg font-bold">No time picked yet</p>
+                <p className="mt-1.5 text-[0.9375rem] text-ink-500">
+                  Choose an open time and your booking details will appear here.
+                </p>
+              </div>
+            )}
+          </aside>
+        </div>
+
+        {/* My bookings */}
+        <section aria-labelledby="mine" className="mt-16 max-w-176 border-t border-line pt-8">
+          <h2 id="mine" className="text-2xl font-black">My bookings</h2>
+          <p className="mt-1.5 text-[0.9375rem] text-ink-500">See or cancel what you’ve booked with this email.</p>
+          <form onSubmit={(e) => { e.preventDefault(); loadMine() }} className="mt-4 flex flex-wrap items-end gap-2.5">
+            <label className="block min-w-0 flex-[1_1_240px] text-sm font-medium">
+              Email
+              <input name="mine-email" type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className={field} />
+            </label>
+            <button disabled={mineLoading} className={secondary}>
+              {mineLoading && !mine ? 'Loading…' : 'Show my bookings'}
+            </button>
+          </form>
+
+          {mineError && <p role="alert" className="mt-3 rounded-control bg-danger-100 px-3 py-2 text-sm text-danger-600">{mineError}</p>}
+          {mine?.length === 0 && (
+            <p className="mt-4 text-ink-500">No bookings for {mineEmail} yet. Pick a time above to make one.</p>
+          )}
+
+          <ul className="mt-5 flex flex-col gap-2.5">
+            {mine?.map((b) => {
+              const s = slotOf(b.slot_id)
+              const active = b.status === 'confirmed'
+              return (
+                <li
+                  key={b.id}
+                  className={
+                    'flex items-center gap-4 rounded-panel px-4 py-3.5 ' +
+                    (active ? 'bg-surface shadow-[0_1px_0_var(--color-line)]' : 'bg-paper ring-1 ring-line ring-inset')
+                  }
+                >
+                  <div className={'w-16 flex-none rounded-control py-1.5 text-center ' + (active ? 'bg-nitrile-100 text-nitrile-900' : 'bg-taken text-ink-500')}>
+                    {s ? (
+                      <>
+                        <span className="block text-xs">{fmt(s.start, { weekday: 'short' })}</span>
+                        <span className="block text-[1.375rem] leading-tight font-black">{fmt(s.start, { day: 'numeric' })}</span>
+                      </>
+                    ) : (
+                      <span className="block py-2 text-xs">Slot {b.slot_id}</span>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-auto">
+                    <p className={'font-bold ' + (active ? '' : 'text-ink-500 line-through decoration-ink-300')}>
+                      {s ? `${hhmm(s.start)} with ${s.provider}` : `Slot ${b.slot_id}`}
+                    </p>
+                    <p className="mt-0.5 text-[0.8125rem] text-ink-500">
+                      {active ? 'Confirmed' : 'Cancelled'}, reference <span className="font-mono">{b.id}</span>
+                    </p>
+                  </div>
+                  {active && (
+                    <button
+                      onClick={() => cancel(b)}
+                      aria-label={`Cancel booking ${b.id}`}
+                      disabled={cancelling === b.id}
+                      className="min-h-11 flex-none rounded-control px-3.5 font-bold text-danger-600 transition-colors duration-(--duration-quick) hover:bg-danger-100 disabled:opacity-60"
+                    >
+                      {cancelling === b.id ? 'Cancelling…' : 'Cancel'}
+                    </button>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+
+          {nextCursor && (
+            <button
+              onClick={() => loadMine(nextCursor)}
+              disabled={mineLoading}
+              className="mt-3 min-h-11 w-full rounded-control border border-dashed border-line-strong font-medium text-ink-700 hover:border-ink-500 disabled:opacity-60"
+            >
+              {mineLoading ? 'Loading…' : 'Load more'}
+            </button>
+          )}
+        </section>
+      </div>
+    </div>
   )
 }
