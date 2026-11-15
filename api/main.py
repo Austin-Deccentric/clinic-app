@@ -1,3 +1,5 @@
+import hmac
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -17,6 +19,9 @@ DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
 app.mount("/assets", StaticFiles(directory=DIST / "assets", check_dir=False), name="assets")
 
 INT4_MAX = 2**31 - 1  # bookings.id is a Postgres integer
+
+API_KEY = os.environ["API_KEY"]
+assert API_KEY, "API_KEY must not be empty"  # fail closed: never boot without auth
 
 
 class SlotIn(SQLModel):
@@ -53,6 +58,17 @@ def booking_out(b: Booking) -> dict:
 
 def error(status: int, message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
+
+
+@app.middleware("http")
+async def require_api_key(request, call_next):
+    # Runs before routing and body parsing, so a bad key is 401 even on unknown routes or bad JSON.
+    path = request.url.path
+    if request.method in ("GET", "HEAD") and (path in ("/", "/health") or path.startswith("/assets/")):
+        return await call_next(request)
+    if not hmac.compare_digest(request.headers.get("x-api-key", "").encode(), API_KEY.encode()):
+        return error(401, "missing or invalid API key")
+    return await call_next(request)
 
 
 @app.get("/", include_in_schema=False)
