@@ -93,7 +93,7 @@ async def create_booking(body: NewBooking):
 
 @app.get("/bookings/{id}")
 async def get_booking(id: str):  # str, not int: a bad id is 404, never a validation error
-    if not (id.isascii() and id.isdigit()) or int(id) > INT4_MAX:
+    if not (id.isascii() and id.isdigit()) or len(id) > 10 or int(id) > INT4_MAX:  # len first: int() refuses >4300 digits
         return error(404, "booking not found")
     async with Session() as s:
         booking = await s.get(Booking, int(id))

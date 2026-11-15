@@ -58,7 +58,7 @@ def test_book_then_look_up():
     assert available == {"past": True, "s1": False, "s2": True, "s3": True}
 
 
-@pytest.mark.parametrize("bad_id", ["999999", "abc", "99999999999999999999", "-1"])
+@pytest.mark.parametrize("bad_id", ["999999", "abc", "99999999999999999999", "-1", "9" * 5000])
 def test_unknown_booking_is_404(bad_id):
     r = api.get(f"/bookings/{bad_id}")
     assert r.status_code == 404
