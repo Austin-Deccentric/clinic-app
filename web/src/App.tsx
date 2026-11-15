@@ -3,7 +3,8 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 type Slot = { id: string; provider: string; start: string; end: string; available: boolean }
 type Booking = { id: string; slot_id: string; name: string; email: string; status: string; created_at: string }
 
-const headers = { 'Content-Type': 'application/json', 'X-API-Key': import.meta.env.VITE_API_KEY ?? '' }
+// No API key here: the page authenticates with the HttpOnly sid cookie the server sets on GET /.
+const headers = { 'Content-Type': 'application/json' }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, { ...init, headers: { ...headers, ...init?.headers } })
@@ -41,6 +42,50 @@ export default function App() {
       .catch((e: Error) => setLoadError(e.message))
 
   useEffect(() => { loadSlots() }, [])
+
+  const [mine, setMine] = useState<Booking[] | null>(null)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [mineEmail, setMineEmail] = useState('')
+  const [mineError, setMineError] = useState('')
+  const [mineLoading, setMineLoading] = useState(false)
+  const [cancelling, setCancelling] = useState<string | null>(null)
+
+  async function loadMine(cursor?: string) {
+    // "Load more" pages the email the list was loaded for, not whatever the shared field holds now.
+    const who = cursor ? mineEmail : email
+    if (!cursor) setMineEmail(who)
+    setMineLoading(true)
+    setMineError('')
+    try {
+      const r = await api<{ bookings: Booking[]; next_cursor: string | null }>(
+        '/bookings?' + new URLSearchParams({ email: who, ...(cursor && { cursor }) }))
+      setMine((prev) => (cursor ? [...(prev ?? []), ...r.bookings] : r.bookings))
+      setNextCursor(r.next_cursor)
+    } catch (err) {
+      setMineError((err as Error).message)
+    } finally {
+      setMineLoading(false)
+    }
+  }
+
+  async function cancel(b: Booking) {
+    if (!confirm(`Cancel booking ${b.id}?`)) return
+    setCancelling(b.id)
+    setMineError('')
+    const replace = (nb: Booking) => setMine((prev) => prev?.map((x) => (x.id === nb.id ? nb : x)) ?? null)
+    try {
+      replace(await api<Booking>('/bookings/' + b.id, { method: 'DELETE' }))
+      if (confirmed?.booking.id === b.id) setConfirmed(null)
+      loadSlots()
+    } catch (err) {
+      if ((err as { status?: number }).status === 409) replace({ ...b, status: 'cancelled' })
+      setMineError((err as Error).message)
+    } finally {
+      setCancelling(null)
+    }
+  }
+
+  const slotOf = (id: string) => slots?.find((s) => s.id === id)
 
   async function book(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -144,6 +189,63 @@ export default function App() {
           </ul>
         </section>
       )}
+
+      <section className="mt-10 border-t border-slate-200 pt-6">
+        <h2 className="text-lg font-semibold">My bookings</h2>
+        <form onSubmit={(e) => { e.preventDefault(); loadMine() }} className="mt-3 flex flex-wrap items-end gap-2">
+          <label className="block min-w-0 flex-1 text-sm font-medium">
+            Email
+            <input name="mine-email" type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-normal" />
+          </label>
+          <button
+            disabled={mineLoading}
+            className="min-h-11 rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:opacity-60"
+          >
+            Show my bookings
+          </button>
+        </form>
+
+        {mineError && <p role="alert" className="mt-3 text-sm text-red-700">{mineError}</p>}
+        {mine?.length === 0 && <p className="mt-3 text-sm text-slate-500">No bookings for this email yet.</p>}
+
+        <ul className="mt-3 space-y-2">
+          {mine?.map((b) => {
+            const s = slotOf(b.slot_id)
+            const active = b.status === 'confirmed'
+            return (
+              <li key={b.id} className="flex items-center justify-between gap-3 rounded-md border border-slate-300 px-4 py-2">
+                <span className="min-w-0">
+                  <span className="block font-medium">{s ? s.provider : b.slot_id}</span>
+                  {s && <span className="block text-sm">{when(s)}</span>}
+                  <span className="block text-xs text-slate-600">
+                    {active ? 'Confirmed' : 'Cancelled'} · <span className="font-mono">#{b.id}</span>
+                  </span>
+                </span>
+                {active && (
+                  <button
+                    onClick={() => cancel(b)}
+                    aria-label={`Cancel booking ${b.id}`}
+                    disabled={cancelling === b.id}
+                    className="min-h-11 shrink-0 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:border-slate-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:opacity-60"
+                  >
+                    {cancelling === b.id ? 'Cancelling…' : 'Cancel'}
+                  </button>
+                )}
+              </li>
+            )
+          })}
+        </ul>
+
+        {nextCursor && (
+          <button
+            onClick={() => loadMine(nextCursor)}
+            disabled={mineLoading}
+            className="mt-3 min-h-11 w-full rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium hover:border-slate-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:opacity-60"
+          >
+            {mineLoading ? 'Loading…' : 'Load more'}
+          </button>
+        )}
+      </section>
     </main>
   )
 }
