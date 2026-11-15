@@ -36,9 +36,9 @@ Checks live in `tests/test_level<N>.py` and run with `BASE_URL=... uv run pytest
 - [x] 3.4 Write `test_level2.py`, then deploy.
 
 ## Phase 4: Level 3 (no double booking, cancel)
-- [ ] 4.1 Confirm in Neon that the partial unique index exists (`\d bookings`), then map `IntegrityError` → 409.
-- [ ] 4.2 Concurrency test: fire 20 simultaneous `POST /bookings` at one slot, **each with a different email** (so the Phase 7 limiter doesn't turn them into 429s), and assert exactly one 201 and nineteen 409s.
-- [ ] 4.3 `DELETE /bookings/{id}` → 200 with the cancelled booking. Unknown or non-numeric id → 404. Already cancelled → 409. The slot becomes available again. Cancel with one `UPDATE ... WHERE status = 'confirmed' RETURNING`.
+- [x] 4.1 Confirm in Neon that the partial unique index exists (`\d bookings`), then map `IntegrityError` → 409.
+- [x] 4.2 Concurrency test: fire 20 simultaneous `POST /bookings` at one slot, **each with a different email** (so the Phase 7 limiter doesn't turn them into 429s), and assert exactly one 201 and nineteen 409s.
+- [x] 4.3 `DELETE /bookings/{id}` → 200 with the cancelled booking. Unknown or non-numeric id → 404. Already cancelled → 409. The slot becomes available again. Cancel with one `UPDATE ... WHERE status = 'confirmed' RETURNING`.
 - [ ] 4.4 Write `test_level3.py` (including rebooking a freed slot), then deploy and run the concurrency test against Render.
 
 ## Phase 5: Level 4a (idempotency)
