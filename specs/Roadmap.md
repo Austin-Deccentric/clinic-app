@@ -16,10 +16,10 @@ Checks live in `tests/test_level<N>.py` and run with `BASE_URL=... uv run pytest
 - [x] 0.5 Write the `Slot` and `Booking` models (with the partial unique index), autogenerate the first migration, check it by hand, and have the container run `alembic upgrade head` on boot.
 
 ## Phase 1: Level 1 (list, book, look up)
-- [ ] 1.1 `POST /reset`: replace all slots and delete all bookings.
-- [ ] 1.2 `GET /slots` → `{"slots": [...]}`: earliest `start` first, `?provider=` exact match, `available` computed.
-- [ ] 1.3 `POST /bookings` → 201 with a `Booking` (`status: confirmed`, `created_at` in ISO UTC).
-- [ ] 1.4 `GET /bookings/{id}` → 200, or 404 `{"error"}`. Take the id as a string: a non-numeric or out-of-range id is 404, not 400.
+- [x] 1.1 `POST /reset`: replace all slots and delete all bookings.
+- [x] 1.2 `GET /slots` → `{"slots": [...]}`: earliest `start` first, `?provider=` exact match, `available` computed.
+- [x] 1.3 `POST /bookings` → 201 with a `Booking` (`status: confirmed`, `created_at` in ISO UTC).
+- [x] 1.4 `GET /bookings/{id}` → 200, or 404 `{"error"}`. Take the id as a string: a non-numeric or out-of-range id is 404, not 400.
 - [ ] 1.5 Write `test_level1.py`, then deploy and run it against Render.
 
 ## Phase 2: Web page (first usable version)
