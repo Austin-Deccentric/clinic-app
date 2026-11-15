@@ -27,7 +27,7 @@ Checks live in `tests/test_level<N>.py` and run with `BASE_URL=... uv run pytest
 - [x] 2.2 Build the slot list from `GET /slots` (available slots are bookable; booked ones are shown disabled).
 - [x] 2.3 Build the booking form (name, email) → `POST /bookings`, with server errors shown inline.
 - [x] 2.4 Build the confirmation view (booking id, provider, time) and refresh the slots afterwards.
-- [ ] 2.5 Serve `web/dist` at `/` from FastAPI through a multi-stage Dockerfile (a bun stage builds `web/dist`, a uv stage runs the API), then deploy and click through on mobile width.
+- [x] 2.5 Serve `web/dist` at `/` from FastAPI through a multi-stage Dockerfile (a bun stage builds `web/dist`, a uv stage runs the API), then deploy and click through on mobile width.
 
 ## Phase 3: Level 2 (auth and validation)
 - [ ] 3.1 API-key middleware: 401 `{"error"}` before body parsing. Exempt only `GET /`, the page's assets, and `/health`. Have the page send `VITE_API_KEY`: add `ARG VITE_API_KEY` to the Dockerfile's bun stage, and after deploying, check that the page's requests carry the key.
