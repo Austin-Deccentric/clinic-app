@@ -84,7 +84,7 @@ def test_cancel_twice_is_409():
     assert_error(api.delete(f"/bookings/{b['id']}"), 409)
 
 
-@pytest.mark.parametrize("bad", ["0", "999999999", "abc", "1.5", "-1", "99999999999999999999", "%C2%B2"])
+@pytest.mark.parametrize("bad", ["0", "999999999", "2147483647", "2147483648", "abc", "1.5", "-1", "99999999999999999999", "%C2%B2"])
 def test_cancel_unknown_or_malformed_id_is_404(bad):
     assert_error(api.delete(f"/bookings/{bad}"), 404)
 
@@ -108,5 +108,5 @@ def test_freed_slot_can_be_rebooked():
 
 def test_concurrent_cancels_one_wins():
     b = book().json()
-    rs = all_at_once([lambda c: c.delete(f"/bookings/{b['id']}")] * 2)
-    assert sorted(r.status_code for r in rs) == [200, 409], [r.text for r in rs]
+    rs = all_at_once([lambda c: c.delete(f"/bookings/{b['id']}")] * 20)
+    assert sorted(r.status_code for r in rs) == [200] + [409] * 19, [r.text for r in rs]
