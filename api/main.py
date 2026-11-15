@@ -1,13 +1,16 @@
 import hmac
 import os
 from datetime import UTC, datetime
+from typing import Annotated
 from pathlib import Path
 
 from fastapi import FastAPI
+from pydantic import StringConstraints
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import exists, insert, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import SQLModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -38,9 +41,10 @@ class ResetIn(SQLModel):
 
 
 class NewBooking(SQLModel):
-    slot_id: str
-    name: str
-    email: str
+    slot_id: Annotated[str, StringConstraints(min_length=1, pattern=r"\S")]  # blank is 400, but not trimmed
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    email: Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, min_length=1,
+                                            pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")]
 
 
 def iso(dt: datetime) -> str:
@@ -138,10 +142,23 @@ async def list_slots(provider: str | None = None):
 
 @app.post("/bookings", status_code=201)
 async def create_booking(body: NewBooking):
-    async with Session.begin() as s:
-        booking = await s.scalar(
-            insert(Booking).values(slot_id=body.slot_id, name=body.name, email=body.email).returning(Booking)
-        )
+    try:
+        async with Session.begin() as s:
+            slot = await s.get(Slot, body.slot_id)
+            if slot is None:
+                return error(404, "slot not found")
+            if slot.start <= datetime.now(UTC):
+                return error(400, "slot has already started")
+            # No check for an existing booking: the partial unique index decides, atomically.
+            booking = await s.scalar(
+                insert(Booking).values(slot_id=body.slot_id, name=body.name, email=body.email).returning(Booking)
+            )
+    except IntegrityError as e:
+        if e.orig.sqlstate == "23505":
+            return error(409, "slot already booked")
+        if e.orig.sqlstate == "23503":  # a concurrent /reset deleted the slot after we loaded it
+            return error(404, "slot not found")
+        raise
     return booking_out(booking)
 
 
