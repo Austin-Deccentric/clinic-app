@@ -1,0 +1,13 @@
+from fastapi import FastAPI
+from sqlalchemy import text
+
+from api.db import engine
+
+app = FastAPI()
+
+
+@app.get("/health")
+async def health():
+    async with engine.connect() as conn:
+        await conn.execute(text("select 1"))
+    return {"ok": True}

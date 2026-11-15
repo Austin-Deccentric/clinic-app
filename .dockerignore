@@ -1,0 +1,10 @@
+.env
+.venv
+.git
+__pycache__
+.superpowers
+.claude
+specs
+tests
+node_modules
+web/dist
