@@ -42,9 +42,9 @@ Checks live in `tests/test_level<N>.py` and run with `BASE_URL=... uv run pytest
 - [x] 4.4 Write `test_level3.py` (including rebooking a freed slot), then deploy and run the concurrency test against Render.
 
 ## Phase 5: Level 4a (idempotency)
-- [ ] 5.1 Add the `IdempotencyKey` model and an Alembic migration for it. Do the insert-first logic (`pg insert().on_conflict_do_nothing()`) in the booking transaction and store the status and body. Put the booking insert in a savepoint (`session.begin_nested()`), or the `IntegrityError` rolls the key row back and the 409 can't be replayed.
-- [ ] 5.2 The same key and body → identical response (status and `id`). A different body → 422.
-- [ ] 5.3 Concurrency test: 10 simultaneous requests with the same key → one booking, and all 10 responses identical.
+- [x] 5.1 Add the `IdempotencyKey` model and an Alembic migration for it. Do the insert-first logic (`pg insert().on_conflict_do_nothing()`) in the booking transaction and store the status and body. Put the booking insert in a savepoint (`session.begin_nested()`), or the `IntegrityError` rolls the key row back and the 409 can't be replayed.
+- [x] 5.2 The same key and body → identical response (status and `id`). A different body → 422.
+- [x] 5.3 Concurrency test: 10 simultaneous requests with the same key → one booking, and all 10 responses identical.
 - [ ] 5.4 Have the page send a fresh `Idempotency-Key` (`crypto.randomUUID()`) for each submit, reused on retry. Deploy.
 
 ## Phase 6: Level 4b (pagination)
@@ -53,7 +53,7 @@ Checks live in `tests/test_level<N>.py` and run with `BASE_URL=... uv run pytest
 - [ ] 6.3 Optional: a "My bookings" panel on the page. Skip it if time is short. Deploy.
 
 ## Phase 7: Level 5 (rate limit)
-- [ ] 7.1 Sliding window per trimmed, lower-cased email on `POST /bookings`, with failed attempts counted. The 6th attempt in 60s → 429 plus `Retry-After` in whole seconds. The idempotency lookup runs first, and a replay doesn't count.
+- [ ] 7.1 Sliding window per trimmed, lower-cased email on `POST /bookings`, with failed attempts counted. The 6th attempt in 60s → 429 plus `Retry-After` in whole seconds. The idempotency lookup runs first, and a replay doesn't count. The limiter sits after the key claim in the same transaction, so `await s.rollback()` before returning the 429: an early return would otherwise commit the claim with a null status and body, and every retry with that key would 500.
 - [ ] 7.2 Tests: the 6th attempt gets 429 while another email still succeeds, and `Retry-After` is an integer of at least 1. `/reset` clears the window. Rerun `test_level3.py` and the Phase 5 and 6 tests to confirm the limiter didn't break them (5.3's ten same-key requests must still all match).
 - [ ] 7.3 Pin a single worker in the Dockerfile `CMD` and deploy.
 

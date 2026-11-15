@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, Index, func, text
+from sqlalchemy import JSON, CheckConstraint, DateTime, Index, func, text
 from sqlmodel import Field, SQLModel
 
 
@@ -31,3 +31,11 @@ class Booking(SQLModel, table=True):
         sa_type=DateTime(timezone=True),
         sa_column_kwargs={"server_default": func.now(), "nullable": False},
     )
+
+
+class IdempotencyKey(SQLModel, table=True):
+    __tablename__ = "idempotency_keys"
+    key: str = Field(primary_key=True)
+    request_hash: str  # sha256 of the parsed JSON body; a different body under the same key is 422
+    status_code: int | None = None  # set in the same transaction that claims the key
+    body: dict | None = Field(default=None, sa_type=JSON)  # json, not jsonb: keeps key order so replays are byte-identical
