@@ -43,15 +43,19 @@ assert API_KEY, "API_KEY must not be empty"  # fail closed: never boot without a
 SID = re.compile(r"[A-Za-z0-9_-]{43}")  # secrets.token_urlsafe(32)
 PAGE_ROUTES = re.compile(r"GET /slots|(GET|POST) /bookings|(GET|DELETE) /bookings/[^/]+")
 
-# shortcut: in-process, so only correct with one worker on one instance, and empty windows are never
-# evicted (one key per distinct email); move to Postgres or Redis if we ever scale out.
-WINDOW, LIMIT = 60, 5
+# shortcut: in-process, so only correct with one worker on one instance; move to Postgres or Redis if
+# we ever scale out.
+WINDOW, LIMIT, MAX_EMAILS = 60, 5, 10_000
 attempts: defaultdict[str, deque[float]] = defaultdict(deque)
 
 
 def check_rate(email: str) -> None:
     """Record one booking attempt, or raise 429. No await inside, so it's atomic on the event loop."""
-    now, q = time.monotonic(), attempts[email]
+    now = time.monotonic()
+    if len(attempts) > MAX_EMAILS:  # drop idle emails, so a stream of one-shot addresses can't grow memory forever
+        for k in [k for k, d in attempts.items() if d[-1] <= now - WINDOW]:
+            del attempts[k]
+    q = attempts[email]
     while q and q[0] <= now - WINDOW:
         q.popleft()
     if len(q) >= LIMIT:

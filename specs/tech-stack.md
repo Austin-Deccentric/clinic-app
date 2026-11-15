@@ -94,6 +94,7 @@ Request and response shapes (`NewBooking`, `BookingOut` with `id: str`, `SlotOut
 ## Known trade-offs
 
 - **The page proves which browser you are, not who you are.** A page session reaches only the bookings it made, so clearing cookies or switching device loses the "My bookings" list (the bookings themselves stay). *Upgrade path:* a one-time code sent to the email. (Until Phase 6 the key shipped in the JS bundle, which let anyone list or cancel any booking.)
-- **The rate limiter lives in memory, so it requires one uvicorn worker on one Render instance**, and a restart resets the window (at most one minute of leniency). *Upgrade path:* a Postgres or Redis counter if we ever scale out.
+- **The rate limiter lives in memory, so it requires one uvicorn worker on one Render instance**, and a restart resets the window (at most one minute of leniency). *Upgrade path:* a Postgres or Redis counter if we ever scale out. Once more than 10,000 emails are tracked, each check drops the ones idle for a full window, so memory stays bounded.
+- **The limit is per email, as the contract says, so anyone can use up another person's 5 attempts a minute** (the page path needs only the free `sid` cookie). *Mitigation if it matters:* an extra per-`sid` or per-IP cap on the page path.
 - **Free Render instances sleep, and the first request after idle takes about 30s.** Graders may time out. *Mitigation:* use the paid Starter instance, or keep the service warm with an external ping to `/health` every 10 minutes, for as long as the submission is under review.
 - **Neon auto-suspends**, adding about 1s to the first query after idle. That's acceptable.
