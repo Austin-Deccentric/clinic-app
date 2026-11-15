@@ -34,7 +34,8 @@ Both are deployed at a public `https` URL and stay up, **unchanged**, after subm
 
 ## Deadline and submission
 
-- **Due by midnight, Sunday 15 November 2026**, submitted from the email you applied with. Grading is rolling, so submitting earlier is better.
+- **Due by midnight, Sunday 15 November 2026**, submitted from the email you applied with. Grading is rolling, so submitting earlier is better. The brief's timezone isn't recorded here; we assume the end of Sunday, WAT. Confirm it in the brief.
+- **Hard stop: 22:00 WAT.** At that time, stop building and start Roadmap Phase 8 with whatever level is live.
 - The form asks for the API base URL, the API key, the web page URL, the GitHub repo (public, or invite `quadri40`), and a Loom of 5 minutes or less. The Loom shows the page working, walks through the code, and covers how far we got, the two biggest decisions, and what we'd do next.
 
 ## Out of scope
