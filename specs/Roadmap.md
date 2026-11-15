@@ -20,7 +20,7 @@ Checks live in `tests/test_level<N>.py` and run with `BASE_URL=... uv run pytest
 - [x] 1.2 `GET /slots` → `{"slots": [...]}`: earliest `start` first, `?provider=` exact match, `available` computed.
 - [x] 1.3 `POST /bookings` → 201 with a `Booking` (`status: confirmed`, `created_at` in ISO UTC).
 - [x] 1.4 `GET /bookings/{id}` → 200, or 404 `{"error"}`. Take the id as a string: a non-numeric or out-of-range id is 404, not 400.
-- [ ] 1.5 Write `test_level1.py`, then deploy and run it against Render.
+- [x] 1.5 Write `test_level1.py`, then deploy and run it against Render.
 
 ## Phase 2: Web page (first usable version)
 - [ ] 2.1 Scaffold `web/` with `bun create vite web --template react-ts`, then `bun add` Tailwind. No component library. Use bun for every JS command.
