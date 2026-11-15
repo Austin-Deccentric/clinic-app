@@ -59,8 +59,8 @@ Checks live in `tests/test_level<N>.py` and run with `BASE_URL=... uv run pytest
 
 ## Phase 8: Harden and submit
 - [ ] 8.1 Run every `test_level*.py` against the production URL, then `POST /reset` to a clean demo data set.
-- [ ] 8.2 Deal with cold starts (Render Starter instance or a keep-warm ping).
-- [ ] 8.3 Write the README: how to run, env vars, the two biggest decisions, and what we'd do next.
+- [x] 8.2 Deal with cold starts (Render Starter instance or a keep-warm ping). Left as is by decision (free instance); documented in the README.
+- [x] 8.3 Write the README: how to run, env vars, the two biggest decisions, and what we'd do next.
 - [ ] 8.4 Record the Loom (5 minutes or less), fill in the Tally form, and **freeze the deploy**: turn off auto-deploy on Render so a later push can't redeploy the service.
 
 ---
