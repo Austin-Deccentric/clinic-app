@@ -8,9 +8,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, Header, Query, Request
+from fastapi import FastAPI, Header, Query, Request, Security
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 from pydantic import StringConstraints
 from sqlalchemy import exists, insert, select, text, true, update
@@ -22,7 +23,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from api.db import Session, engine
 from api.models import Booking, IdempotencyKey, Slot
 
-app = FastAPI()
+# Only puts the key in the schema so /docs gets an Authorize button; the middleware does the real check.
+app = FastAPI(dependencies=[Security(APIKeyHeader(name="X-API-Key", auto_error=False))])
 
 # The built page (web/dist): only GET / and /assets, so unknown routes stay ordinary API 404s.
 DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
@@ -110,7 +112,7 @@ async def internal_error(request, exc):
 async def require_api_key(request, call_next):
     # Runs before routing and body parsing, so a bad key is 401 even on unknown routes or bad JSON.
     path = request.url.path
-    if request.method == "GET" and (path in ("/", "/health") or path.startswith("/assets/")):
+    if request.method == "GET" and (path in ("/", "/health", "/docs", "/openapi.json") or path.startswith("/assets/")):
         return await call_next(request)
     request.state.sid = None
     if hmac.compare_digest(request.headers.get("x-api-key", "").encode(), API_KEY.encode()):
