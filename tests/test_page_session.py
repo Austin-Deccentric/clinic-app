@@ -34,7 +34,7 @@ def book(client, slot, email="pat@example.com"):
 
 def test_page_gets_a_locked_down_cookie():
     c = httpx.get(f"{BASE_URL}/").headers["set-cookie"].lower()
-    assert c.startswith("sid=") and "httponly" in c and "samesite=strict" in c and "secure" in c
+    assert c.startswith("sid=") and "httponly" in c and "samesite=lax" in c and "secure" in c
 
 
 def test_page_bundle_has_no_api_key():

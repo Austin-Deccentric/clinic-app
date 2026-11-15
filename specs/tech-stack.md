@@ -35,7 +35,7 @@ clinic-app/
 - `DATABASE_URL`: the Neon **pooled** connection string as `postgresql+psycopg://...`, used by the app. Neon's pooler doesn't keep prepared statements between queries, so the engine sets `connect_args={"prepare_threshold": None}`.
 - `DATABASE_URL_DIRECT`: the Neon **direct** (non-pooled) string, used by Alembic only. Migrations take locks and need a real session.
 - `API_KEY`: the key we choose and submit in the form.
-- No key in the page. `GET /` sets a random `sid` cookie (HttpOnly, Secure, SameSite=Strict). Without a key, the middleware accepts that cookie on the page's routes only (`GET /slots`, `GET`/`POST /bookings`, `GET`/`DELETE /bookings/{id}`), and those routes only see bookings whose `session` matches it. In dev, the Vite proxy adds the key server-side from `API_KEY`.
+- No key in the page. `GET /` sets a random `sid` cookie (HttpOnly, Secure, SameSite=Lax; Lax so a link from another site keeps the session). Without a key, the middleware accepts that cookie on the page's routes only (`GET /slots`, `GET`/`POST /bookings`, `GET`/`DELETE /bookings/{id}`), and those routes only see bookings whose `session` matches it. In dev, the Vite proxy adds the key server-side from `API_KEY`.
 
 ## How each level is enforced
 

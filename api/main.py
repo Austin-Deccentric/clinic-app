@@ -130,10 +130,12 @@ def mine(request: Request):
 
 @app.get("/", include_in_schema=False)
 async def page(request: Request):
-    res = FileResponse(DIST / "index.html")
+    res = FileResponse(DIST / "index.html", headers={"Cache-Control": "no-store"})  # never cache a Set-Cookie
     if not SID.fullmatch(request.cookies.get("sid", "")):
+        # Lax, not Strict: Strict drops the cookie on a link from another site, and we would reissue it and lose
+        # the history. Lax still keeps it off cross-site POST/DELETE, the only state-changing routes.
         res.set_cookie("sid", secrets.token_urlsafe(32), max_age=365 * 86400,
-                       httponly=True, secure=True, samesite="strict")  # Strict: no cross-site request carries it
+                       httponly=True, secure=True, samesite="lax")
     return res
 
 
