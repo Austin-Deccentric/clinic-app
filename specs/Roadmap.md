@@ -10,10 +10,10 @@ Checks live in `tests/test_level<N>.py` and run with `BASE_URL=... uv run pytest
 
 ## Phase 0: Skeleton deployed (about 45 min)
 - [ ] 0.1 Create a git repo in `clinic-app/` and push it to GitHub as a public repo.
-- [ ] 0.2 Run `uv init` and `uv add fastapi uvicorn sqlmodel alembic "psycopg[binary]"`, plus `uv add --dev pytest httpx`. Write a FastAPI app with `GET /health` → `{"ok": true}`, run with `uv run uvicorn api.main:app`.
+- [x] 0.2 Run `uv init` and `uv add fastapi uvicorn sqlmodel alembic "psycopg[binary]"`, plus `uv add --dev pytest httpx`. Write a FastAPI app with `GET /health` → `{"ok": true}`, run with `uv run uvicorn api.main:app`.
 - [ ] 0.3 Write the Dockerfile (uvicorn with `--host 0.0.0.0 --port $PORT`) and deploy to a Render web service. Confirm the `https` URL responds.
 - [ ] 0.4 Create the Neon project. Run `uv run alembic init -t async alembic` and point `env.py` at `SQLModel.metadata` and `DATABASE_URL_DIRECT`. Set both DB URLs on Render. Have `/health` run `select 1`.
-- [ ] 0.5 Write the `Slot` and `Booking` models (with the partial unique index), autogenerate the first migration, check it by hand, and have the container run `alembic upgrade head` on boot.
+- [x] 0.5 Write the `Slot` and `Booking` models (with the partial unique index), autogenerate the first migration, check it by hand, and have the container run `alembic upgrade head` on boot.
 
 ## Phase 1: Level 1 (list, book, look up)
 - [ ] 1.1 `POST /reset`: replace all slots and delete all bookings.
