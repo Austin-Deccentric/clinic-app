@@ -6,5 +6,5 @@ __pycache__
 .claude
 specs
 tests
-node_modules
+**/node_modules
 web/dist
