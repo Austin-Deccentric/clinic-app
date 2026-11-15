@@ -45,7 +45,7 @@ Checks live in `tests/test_level<N>.py` and run with `BASE_URL=... uv run pytest
 - [x] 5.1 Add the `IdempotencyKey` model and an Alembic migration for it. Do the insert-first logic (`pg insert().on_conflict_do_nothing()`) in the booking transaction and store the status and body. Put the booking insert in a savepoint (`session.begin_nested()`), or the `IntegrityError` rolls the key row back and the 409 can't be replayed.
 - [x] 5.2 The same key and body → identical response (status and `id`). A different body → 422.
 - [x] 5.3 Concurrency test: 10 simultaneous requests with the same key → one booking, and all 10 responses identical.
-- [ ] 5.4 Have the page send a fresh `Idempotency-Key` (`crypto.randomUUID()`) for each submit, reused on retry. Deploy.
+- [x] 5.4 Have the page send a fresh `Idempotency-Key` (`crypto.randomUUID()`) for each submit, reused on retry. Deploy.
 
 ## Phase 6: Level 4b (pagination)
 - [ ] 6.1 `GET /bookings?email=&limit=&cursor=`: oldest first, case-insensitive email, `limit` from 1 to 50 (default 10, anything else → 400). The response is `{"bookings": [...], "next_cursor": ...}`. A non-numeric `cursor` → 400.
