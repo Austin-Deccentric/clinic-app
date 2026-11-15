@@ -1,0 +1,18 @@
+[project]
+name = "clinic-app"
+version = "0.1.0"
+description = "Clinic booking API and web page (Koya Cohort 4, Task 1)"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.20.1",
+    "fastapi>=0.163.1",
+    "psycopg[binary]>=3.3.9",
+    "sqlmodel>=0.0.50",
+    "uvicorn>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.2.0",
+]
