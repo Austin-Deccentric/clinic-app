@@ -84,7 +84,7 @@ def test_limited_request_leaves_no_key_claim():
 def test_reset_clears_the_window():
     fill()
     assert_limited(attempt())
-    reset()
+    assert api.post("/reset", json={"slots": SLOTS}).status_code == 200
     assert attempt().status_code == 201
 
 
@@ -104,9 +104,9 @@ def test_slow_window_expires_and_429s_are_not_counted():
     for i in range(5):
         assert attempt(f"s{i + 1}").status_code != 429
     time.sleep(30)
-    for _ in range(5):
-        last = attempt("s6")
-        assert_limited(last)
+    limited = [attempt("s6") for _ in range(5)]
+    for r in limited:
+        assert_limited(r)
     # The first five have aged out by now; the 429s would still be in the window if they counted.
-    time.sleep(int(last.headers["Retry-After"]) + 0.5)
+    time.sleep(int(limited[-1].headers["Retry-After"]) + 0.5)
     assert attempt("s6").status_code != 429

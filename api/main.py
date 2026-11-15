@@ -4,7 +4,10 @@ import json
 import os
 import re
 import secrets
+import time
+from collections import defaultdict, deque
 from datetime import UTC, datetime
+from math import ceil
 from pathlib import Path
 from typing import Annotated
 
@@ -39,6 +42,22 @@ assert API_KEY, "API_KEY must not be empty"  # fail closed: never boot without a
 # reaches the page's own routes, and only the bookings that browser made.
 SID = re.compile(r"[A-Za-z0-9_-]{43}")  # secrets.token_urlsafe(32)
 PAGE_ROUTES = re.compile(r"GET /slots|(GET|POST) /bookings|(GET|DELETE) /bookings/[^/]+")
+
+# shortcut: in-process, so only correct with one worker on one instance, and empty windows are never
+# evicted (one key per distinct email); move to Postgres or Redis if we ever scale out.
+WINDOW, LIMIT = 60, 5
+attempts: defaultdict[str, deque[float]] = defaultdict(deque)
+
+
+def check_rate(email: str) -> None:
+    """Record one booking attempt, or raise 429. No await inside, so it's atomic on the event loop."""
+    now, q = time.monotonic(), attempts[email]
+    while q and q[0] <= now - WINDOW:
+        q.popleft()
+    if len(q) >= LIMIT:
+        raise StarletteHTTPException(429, "too many booking attempts for this email",
+                                     headers={"Retry-After": str(max(1, ceil(q[0] + WINDOW - now)))})
+    q.append(now)
 
 
 class SlotIn(SQLModel):
@@ -154,6 +173,7 @@ async def reset(body: ResetIn):
         # No RESTART IDENTITY: an id issued before a reset must never point at a later booking.
         await s.execute(text("truncate bookings, idempotency_keys, slots"))
         s.add_all(Slot(**slot.model_dump()) for slot in body.slots)
+    attempts.clear()
     return {"ok": True}
 
 
@@ -191,6 +211,8 @@ async def create_booking(body: NewBooking, request: Request,
                 if prior.request_hash != request_hash:
                     return error(422, "idempotency key reused with a different body")
                 return JSONResponse(prior.body, status_code=prior.status_code)
+        # After the replay (replays don't count); raising inside begin() rolls back a fresh key claim.
+        check_rate(body.email)
         status, out = await book_slot(s, body, request.state.sid)
         if idempotency_key:
             await s.execute(update(IdempotencyKey).where(IdempotencyKey.key == idempotency_key)

@@ -53,8 +53,8 @@ Checks live in `tests/test_level<N>.py` and run with `BASE_URL=... uv run pytest
 - [x] 6.3 Optional: a "My bookings" panel on the page. Skip it if time is short. Deploy.
 
 ## Phase 7: Level 5 (rate limit)
-- [ ] 7.1 Sliding window per trimmed, lower-cased email on `POST /bookings`, with failed attempts counted. The 6th attempt in 60s → 429 plus `Retry-After` in whole seconds. The idempotency lookup runs first, and a replay doesn't count. The limiter sits after the key claim in the same transaction, so raise the 429 as an `HTTPException` inside `Session.begin()`, which rolls the claim back: an early return would commit the claim with a null status and body, and every retry with that key would 500.
-- [ ] 7.2 Tests: the 6th attempt gets 429 while another email still succeeds, and `Retry-After` is an integer of at least 1. `/reset` clears the window. Rerun `test_level3.py` and the Phase 5 and 6 tests to confirm the limiter didn't break them (5.3's ten same-key requests must still all match).
+- [x] 7.1 Sliding window per trimmed, lower-cased email on `POST /bookings`, with failed attempts counted. The 6th attempt in 60s → 429 plus `Retry-After` in whole seconds. The idempotency lookup runs first, and a replay doesn't count. The limiter sits after the key claim in the same transaction, so raise the 429 as an `HTTPException` inside `Session.begin()`, which rolls the claim back: an early return would commit the claim with a null status and body, and every retry with that key would 500.
+- [x] 7.2 Tests: the 6th attempt gets 429 while another email still succeeds, and `Retry-After` is an integer of at least 1. `/reset` clears the window. Rerun `test_level3.py` and the Phase 5 and 6 tests to confirm the limiter didn't break them (5.3's ten same-key requests must still all match).
 - [ ] 7.3 Pin a single worker in the Dockerfile `CMD` and deploy.
 
 ## Phase 8: Harden and submit
